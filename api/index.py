@@ -251,9 +251,9 @@ def process_pdf():
             "message": str(e)
         }), 500
 
-# Export for Vercel
-def handler(request):
-    return app(request.environ, start_response)
+# CORRECTED: Proper Vercel export
+# Remove the incorrect handler function and use this instead:
+app = app  # Export the Flask app directly
 
 if __name__ == '__main__':
     app.run(debug=True)
