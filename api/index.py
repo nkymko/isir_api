@@ -13,7 +13,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-@cross_origin(origins=['http://10.73.142.71'])
+CORS(app)
 
 @app.route('/')
 def home():
