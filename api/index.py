@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import fitz  # PyMuPDF
 import json
 import re
@@ -11,6 +12,8 @@ import io
 from datetime import datetime
 
 app = Flask(__name__)
+
+@cross_origin(origins=['http://10.73.142.71'])
 
 @app.route('/')
 def home():
