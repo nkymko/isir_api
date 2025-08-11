@@ -101,12 +101,12 @@ def extract_measurement_data_with_coords(page):
                     if not re.match(r'^\d+\.?\d*$', entry_words[0]):
                         sym = entry_words.pop(0)
                     
-                    center, upper, lower, pos, measured_by_vendor = entry_words
+                    dimension, upper, lower, pos, measured_by_vendor = entry_words
 
                     measurements.append({
                         "no": no,
                         "sym": sym,
-                        "center": center,
+                        "dimension": dimension,
                         "upper": upper,
                         "lower": lower,
                         "pos": pos,
