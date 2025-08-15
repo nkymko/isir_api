@@ -69,52 +69,188 @@ def extract_header_data(page_text):
     header_info['rohs_data'] = rohs_data
     return header_info
 
-def extract_measurement_data_with_coords(page):
-    """Extract measurement data from PDF page"""
+def _is_numeric_value(text):
+    """Check if text represents a numeric value (including decimals, negatives, etc.)"""
+    if not text:
+        return False
+    try:
+        # Clean the text first
+        clean_text = text.replace('+', '').replace(',', '.').strip()
+        # Handle negative values
+        if clean_text.startswith('-'):
+            clean_text = clean_text[1:]
+        float(clean_text)
+        return True
+    except ValueError:
+        return False
+
+def _parse_measurements_from_text(text):
+    """Parse measurements from raw text using regex patterns"""
     measurements = []
-    words = page.get_text("words")
-    lines = defaultdict(list)
-
-    for w in words:
-        lines[round(w[1])].append(w)
-
-    measurement_char_pattern = re.compile(r"^(?:\d{1,3}(?:\.\d+)?|[A-Za-z]{1,3}|[©شPपp04⌀∅⊕⊙○●◯◉⊗⊘∀∁∂∃∄∅∆∇∈∉∊∋∌∍∎∏∐∑−∓∔∕∖∗∘∙√∛∜∝∞∟∠∡∢∣∤∥∦∧∨∩∪∫∬∭∮∯∰∱∲∳∴∵∶∷∸∹∺∻∼∽∾∿≀≁≂≃≄≅≆≇≈≉≊≋≌≍≎≏≐≑≒≓≔≕≖≗≘≙≚≛≜≝≞≟≠≡≢≣≤≥≦≧≨≩≪≫≬≭≮≯≰≱≲≳≴≵≶≷≸≹≺≻≼≽≾≿⊀⊁⊂⊃⊄⊅⊆⊇⊈⊉⊊⊋⊌⊍⊎⊏⊐⊑⊒⊓⊔⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡⊢⊣⊤⊥⊦⊧⊨⊩⊪⊫⊬⊭⊮⊯⊰⊱⊲⊳⊴⊵⊶⊷⊸⊹⊺⊻⊼⊽⊾⊿⋀⋁⋂⋃⋄⋅⋆⋇⋈⋉⋊⋋⋌⋍⋎⋏⋐⋑⋒⋓⋔⋕⋖⋗⋘⋙⋚⋛⋜⋝⋞⋟⋠⋡⋢⋣⋤⋥⋦⋧⋨⋩⋪⋫⋬⋭⋮⋯⋰⋱⋲⋳⋴⋵⋶⋷⋸⋹⋺⋻⋼⋽⋾⋿φψχωΩαβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ℀℁ℂ℃℄℅℆ℇ℈℉ℊℋℌℍℎℏℐℑℒℓ℔ℕ№℗℘ℙℚℛℜℝ℞℟℠℡™℣ℤ℥Ω℧ℨ℩KÅℬℭ℮ℯℰℱℲℳℴℵℶℷℸℹ℺℻ℼℽℾℿ⅀⅁⅂⅃⅄ⅅⅆⅇⅈⅉ⅊⅋⅌⅍ⅎ⅏►◄▲▼◆◇○●◯◉⊗⊘△▲▽▼◁▷⧺⧻⦿⊙⊚⊛⊜⊝⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡]|[ĀĂĄĆĈĊČĎĐĒĔĖĘĚĜĞĠĢĤĦĨĪĬĮİĲĴĶĹĻĽĿŁŃŅŇŊŌŎŐŒŔŖŘŚŜŞŠŢŤŦŨŪŬŮŰŲŴŶŸŹŻŽ])$", re.UNICODE)
-
-    for y in sorted(lines.keys()):
-        line_words = sorted(lines[y], key=lambda w: w[0])
-        text_line = [w[4] for w in line_words if measurement_char_pattern.match(w[4])]
-
-        entries_to_process = []
+    
+    # Split text into lines
+    lines = text.split('\n')
+    
+    # Look for measurement patterns - more flexible regex
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
         
-        if 12 <= len(text_line) <= 14:
-            split_point = len(text_line) // 2
-            entries_to_process.append(text_line[:split_point])
-            entries_to_process.append(text_line[split_point:])
-        elif 6 <= len(text_line) <= 7:
-            entries_to_process.append(text_line)
-
-        if entries_to_process:
+        # Skip header lines
+        if any(header in line.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
+            continue
+        
+        # Split line into parts
+        parts = line.split()
+        
+        # Check if this looks like a measurement line (starts with a number)
+        if parts and parts[0].isdigit():
             try:
-                for entry_words in entries_to_process:
-                    no = entry_words.pop(0)
-                    sym = ""
-                    if not re.match(r'^\d+\.?\d*$', entry_words[0]):
-                        sym = entry_words.pop(0)
-                    
-                    dimension, upper, lower, pos, measured_by_vendor = entry_words
-
-                    measurements.append({
-                        "no": no,
-                        "sym": sym,
-                        "dimension": dimension,
-                        "upper": upper,
-                        "lower": lower,
-                        "pos": pos,
-                        "measured_by_vendor": measured_by_vendor
-                    })
-            except (IndexError, ValueError):
+                measurement = _parse_measurement_parts(parts)
+                if measurement:
+                    measurements.append(measurement)
+            except:
                 continue
-                
+    
+    return measurements
+
+def _parse_measurement_parts(parts):
+    """Parse measurement from parts array"""
+    if len(parts) < 4:  # Minimum: no, dimension, some values
+        return None
+    
+    try:
+        no = parts[0]
+        if not no.isdigit():
+            return None
+        
+        # Check for symbol
+        sym = ""
+        idx = 1
+        
+        # Common symbols to look for
+        symbol_indicators = ['Ø', 'ø', 'BURR', '⌀', 'φ']
+        if idx < len(parts) and any(symbol in parts[idx] for symbol in symbol_indicators):
+            sym = parts[idx]
+            idx += 1
+        elif idx < len(parts) and not _is_numeric_value(parts[idx]):
+            # If it's not numeric, it might be a symbol
+            sym = parts[idx]
+            idx += 1
+        
+        # Extract remaining fields with defaults
+        dimension = parts[idx] if idx < len(parts) else ""
+        upper = parts[idx + 1] if idx + 1 < len(parts) else ""
+        lower = parts[idx + 2] if idx + 2 < len(parts) else ""
+        pos = parts[idx + 3] if idx + 3 < len(parts) else ""
+        measured_by_vendor = parts[idx + 4] if idx + 4 < len(parts) else ""
+        
+        return {
+            "no": no,
+            "sym": sym,
+            "dimension": dimension,
+            "upper": upper,
+            "lower": lower,
+            "pos": pos,
+            "measured_by_vendor": measured_by_vendor
+        }
+    except:
+        return None
+
+def _extract_from_words(words):
+    """Extract measurements by analyzing word positions"""
+    measurements = []
+    
+    # Group words by approximate line (y-coordinate)
+    lines = defaultdict(list)
+    for word in words:
+        y_coord = round(word[1], -1)  # Round to nearest 10 pixels
+        lines[y_coord].append(word)
+    
+    # Sort each line by x-coordinate
+    for y_coord in lines:
+        lines[y_coord].sort(key=lambda w: w[0])
+    
+    # Process each line
+    for y_coord in sorted(lines.keys()):
+        line_words = [w[4] for w in lines[y_coord]]  # Extract text
+        line_text = ' '.join(line_words)
+        
+        # Skip header lines
+        if any(header in line_text.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
+            continue
+        
+        # Try to parse measurement from this line
+        if line_words and line_words[0].isdigit():
+            try:
+                measurement = _parse_measurement_parts(line_words)
+                if measurement:
+                    measurements.append(measurement)
+            except:
+                continue
+    
+    return measurements
+
+def extract_measurement_data_with_coords(page):
+    """Extract measurement data from PDF page - Fixed version"""
+    measurements = []
+    
+    # Method 1: Try extracting from blocks
+    blocks = page.get_text("blocks")
+    
+    for block in blocks:
+        if isinstance(block, tuple) and len(block) >= 5:
+            block_text = block[4]  # Text content
+            
+            # Parse measurements from this block
+            block_measurements = _parse_measurements_from_text(block_text)
+            measurements.extend(block_measurements)
+    
+    # Method 2: If no measurements found, try parsing from raw text
+    if not measurements:
+        page_text = page.get_text("text")
+        measurements = _parse_measurements_from_text(page_text)
+    
+    # Method 3: If still no measurements, try word-by-word analysis
+    if not measurements:
+        words = page.get_text("words")
+        measurements = _extract_from_words(words)
+    
+    # Additional method: Try to find table-like structures
+    if not measurements:
+        measurements = _extract_table_data(page)
+    
+    return measurements
+
+def _extract_table_data(page):
+    """Try to extract data assuming it's in a table format"""
+    measurements = []
+    
+    # Get text with detailed positioning
+    text_dict = page.get_text("dict")
+    
+    # Look for potential table rows
+    for block in text_dict.get("blocks", []):
+        if "lines" not in block:
+            continue
+            
+        for line in block["lines"]:
+            line_text = ""
+            for span in line.get("spans", []):
+                line_text += span.get("text", "") + " "
+            
+            line_text = line_text.strip()
+            if not line_text:
+                continue
+            
+            # Parse potential measurement line
+            parts = line_text.split()
+            if parts and parts[0].isdigit():
+                measurement = _parse_measurement_parts(parts)
+                if measurement:
+                    measurements.append(measurement)
+    
     return measurements
 
 def extract_cavity_number_from_filename(filename):
@@ -126,7 +262,7 @@ def extract_cavity_number_from_filename(filename):
         return os.path.splitext(os.path.basename(filename))[0]
 
 def process_pdf_data(pdf_data, filename):
-    """Process PDF data from memory"""
+    """Process PDF data from memory - Updated version"""
     try:
         doc = fitz.open(stream=pdf_data, filetype="pdf")
     except Exception as e:
@@ -138,16 +274,28 @@ def process_pdf_data(pdf_data, filename):
     first_page_text = doc[0].get_text("text")
     header_data = extract_header_data(first_page_text)
     
-    # Extract measurements from other pages
+    # Extract measurements from ALL pages
     all_measurements = []
-    for page_num in range(1, len(doc)):
+    for page_num in range(len(doc)):
         page = doc[page_num]
         measurements_on_page = extract_measurement_data_with_coords(page)
         if measurements_on_page:
+            # Add page number for debugging
+            for measurement in measurements_on_page:
+                measurement['page'] = page_num
             all_measurements.extend(measurements_on_page)
 
     # Remove duplicates and sort
-    unique_measurements = [dict(t) for t in {tuple(d.items()) for d in all_measurements}]
+    unique_measurements = []
+    seen = set()
+    for measurement in all_measurements:
+        # Create a tuple of key values for deduplication
+        key = (measurement['no'], measurement['dimension'])
+        if key not in seen:
+            seen.add(key)
+            unique_measurements.append(measurement)
+    
+    # Sort by measurement number
     unique_measurements.sort(key=lambda x: int(x['no']) if x['no'].isdigit() else 0)
     
     doc.close()
