@@ -1,23 +1,31 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import fitz  # PyMuPDF
+import json
 import re
+import pandas as pd
 from collections import defaultdict
 import os
+import tempfile
 from werkzeug.utils import secure_filename
+import io
 from datetime import datetime
 
 app = Flask(__name__)
+
 CORS(app)
 
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB limit for Vercel
+@app.route('/')
+def home():
+    return 'Hello, World!'
+
+# Vercel serverless configuration
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # Reduced to 10MB for Vercel
 
 ALLOWED_EXTENSIONS = {'pdf'}
 
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
 
 def extract_header_data(page_text):
     """Extract header information from the text of the first page"""
@@ -35,13 +43,15 @@ def extract_header_data(page_text):
         'grade_name': r"Grade Name\s*(\S+)",
         'dds2004_result': r"Result:\s*\[\s*(YES|NO)\s*\]"
     }
+    
     for key, pattern in patterns.items():
         match = re.search(pattern, page_text, re.DOTALL)
         if match:
             header_info[key] = match.group(1).strip().replace('\n', ' ')
         else:
             header_info[key] = None
-
+            
+    # RoHS data extraction
     rohs_data = {}
     rohs_patterns = {
         'cd_result': r"Cd\s*<0\.01%\s*(Not Detected)",
@@ -55,17 +65,18 @@ def extract_header_data(page_text):
             rohs_data[key] = match.group(1).strip()
         else:
             rohs_data[key] = None
-
+    
     header_info['rohs_data'] = rohs_data
     return header_info
 
-
 def _is_numeric_value(text):
-    """Check if text represents a numeric value"""
+    """Check if text represents a numeric value (including decimals, negatives, etc.)"""
     if not text:
         return False
     try:
+        # Clean the text first
         clean_text = text.replace('+', '').replace(',', '.').strip()
+        # Handle negative values
         if clean_text.startswith('-'):
             clean_text = clean_text[1:]
         float(clean_text)
@@ -73,211 +84,305 @@ def _is_numeric_value(text):
     except ValueError:
         return False
 
-
-# ------------------ NEW MEASUREMENTS EXTRACTION ------------------ #
-
-def extract_measurement_data_with_coords(page, page_num):
-    """Extract measurement data from PDF page and merge vendor measurements."""
-    words = page.get_text("words")
-    if not words:
-        return []
-
-    # Split into left & right halves
-    page_width = page.rect.width
-    mid_x = page_width / 2
-    left_words = [w for w in words if w[0] < mid_x]
-    right_words = [w for w in words if w[0] >= mid_x]
-
-    # Parse left as main measurements
-    left_measurements = _extract_main_measurements(left_words, page_num)
-
-    # Parse right as vendor measurements
-    vendor_values = _extract_vendor_measurements(right_words)
-
-    # Merge vendor value into left_measurements by 'no'
-    for m in left_measurements:
-        no = m["no"]
-        m["measured_by_vendor"] = vendor_values.get(no, None)
-
-    return left_measurements
-
-
-def _extract_main_measurements(words, page_num):
-    """Parse the left table: no, sym, dim, upper, lower, pos."""
+def _parse_measurements_from_text(text):
+    """Parse measurements from raw text using regex patterns"""
     measurements = []
-    lines = defaultdict(list)
-
-    for w in words:
-        y = round(w[1], -1)
-        lines[y].append(w)
-
-    for y in sorted(lines.keys()):
-        line_words = sorted(lines[y], key=lambda w: w[0])
-        text_parts = [lw[4] for lw in line_words]
-
-        # Skip headers
-        if any(h in " ".join(text_parts).upper()
-               for h in ["NO.", "SYM.", "DIMENSION", "UPPER", "LOWER", "POS."]):
+    
+    # Split text into lines
+    lines = text.split('\n')
+    
+    # Look for measurement patterns - more flexible regex
+    for line in lines:
+        line = line.strip()
+        if not line:
             continue
-
-        if text_parts and text_parts[0].isdigit():
-            m = _parse_main_parts(text_parts)
-            if m:
-                m["page"] = page_num
-                measurements.append(m)
-
+        
+        # Skip header lines
+        if any(header in line.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
+            continue
+        
+        # Split line into parts
+        parts = line.split()
+        
+        # Check if this looks like a measurement line (starts with a number)
+        if parts and parts[0].isdigit():
+            try:
+                measurement = _parse_measurement_parts(parts)
+                if measurement:
+                    measurements.append(measurement)
+            except:
+                continue
+    
     return measurements
 
-
-def _parse_main_parts(parts):
-    if len(parts) < 4:
+def _parse_measurement_parts(parts):
+    """Parse measurement from parts array"""
+    if len(parts) < 4:  # Minimum: no, dimension, some values
+        return None
+    
+    try:
+        no = parts[0]
+        if not no.isdigit():
+            return None
+        
+        # Check for symbol
+        sym = ""
+        idx = 1
+        
+        # Common symbols to look for
+        symbol_indicators = ['Ø', 'ø', 'BURR', '⌀', 'φ']
+        if idx < len(parts) and any(symbol in parts[idx] for symbol in symbol_indicators):
+            sym = parts[idx]
+            idx += 1
+        elif idx < len(parts) and not _is_numeric_value(parts[idx]):
+            # If it's not numeric, it might be a symbol
+            sym = parts[idx]
+            idx += 1
+        
+        # Extract remaining fields with defaults
+        dimension = parts[idx] if idx < len(parts) else ""
+        upper = parts[idx + 1] if idx + 1 < len(parts) else ""
+        lower = parts[idx + 2] if idx + 2 < len(parts) else ""
+        pos = parts[idx + 3] if idx + 3 < len(parts) else ""
+        measured_by_vendor = parts[idx + 4] if idx + 4 < len(parts) else ""
+        
+        return {
+            "no": no,
+            "sym": sym,
+            "dimension": dimension,
+            "upper": upper,
+            "lower": lower,
+            "pos": pos,
+            "measured_by_vendor": measured_by_vendor
+        }
+    except:
         return None
 
-    no = parts[0]
-    if not no.isdigit():
-        return None
-
-    sym = ""
-    idx = 1
-    symbol_indicators = ['Ø', 'ø', 'BURR', '⌀', 'φ']
-    if idx < len(parts) and any(symbol in parts[idx] for symbol in symbol_indicators):
-        sym = parts[idx]
-        idx += 1
-    elif idx < len(parts) and not _is_numeric_value(parts[idx]):
-        sym = parts[idx]
-        idx += 1
-
-    dimension = parts[idx] if idx < len(parts) else ""
-    upper = parts[idx + 1] if idx + 1 < len(parts) else ""
-    lower = parts[idx + 2] if idx + 2 < len(parts) else ""
-    pos = parts[idx + 3] if idx + 3 < len(parts) else ""
-
-    return {
-        "no": no,
-        "sym": sym,
-        "dimension": dimension,
-        "upper": upper,
-        "lower": lower,
-        "pos": pos
-    }
-
-
-def _extract_vendor_measurements(words):
-    """Extract mapping of no -> measured_by_vendor from right table."""
-    vendor_map = {}
+def _extract_from_words(words):
+    """Extract measurements by analyzing word positions"""
+    measurements = []
+    
+    # Group words by approximate line (y-coordinate)
     lines = defaultdict(list)
+    for word in words:
+        y_coord = round(word[1], -1)  # Round to nearest 10 pixels
+        lines[y_coord].append(word)
+    
+    # Sort each line by x-coordinate
+    for y_coord in lines:
+        lines[y_coord].sort(key=lambda w: w[0])
+    
+    # Process each line
+    for y_coord in sorted(lines.keys()):
+        line_words = [w[4] for w in lines[y_coord]]  # Extract text
+        line_text = ' '.join(line_words)
+        
+        # Skip header lines
+        if any(header in line_text.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
+            continue
+        
+        # Try to parse measurement from this line
+        if line_words and line_words[0].isdigit():
+            try:
+                measurement = _parse_measurement_parts(line_words)
+                if measurement:
+                    measurements.append(measurement)
+            except:
+                continue
+    
+    return measurements
 
-    for w in words:
-        y = round(w[1], -1)
-        lines[y].append(w)
+def extract_measurement_data_with_coords(page):
+    """Extract measurement data from PDF page - Fixed version"""
+    measurements = []
+    
+    # Method 1: Try extracting from blocks
+    blocks = page.get_text("blocks")
+    
+    for block in blocks:
+        if isinstance(block, tuple) and len(block) >= 5:
+            block_text = block[4]  # Text content
+            
+            # Parse measurements from this block
+            block_measurements = _parse_measurements_from_text(block_text)
+            measurements.extend(block_measurements)
+    
+    # Method 2: If no measurements found, try parsing from raw text
+    if not measurements:
+        page_text = page.get_text("text")
+        measurements = _parse_measurements_from_text(page_text)
+    
+    # Method 3: If still no measurements, try word-by-word analysis
+    if not measurements:
+        words = page.get_text("words")
+        measurements = _extract_from_words(words)
+    
+    # Additional method: Try to find table-like structures
+    if not measurements:
+        measurements = _extract_table_data(page)
+    
+    return measurements
 
-    for y in sorted(lines.keys()):
-        line_words = sorted(lines[y], key=lambda w: w[0])
-        text_parts = [lw[4] for lw in line_words]
-
-        if text_parts and text_parts[0].isdigit():
-            no = text_parts[0]
-            vendor_value = None
-            for p in text_parts[1:]:
-                if _is_numeric_value(p):
-                    vendor_value = p
-                    break
-            vendor_map[no] = vendor_value
-
-    return vendor_map
-
-
-# ------------------ PROCESS PDF ------------------ #
+def _extract_table_data(page):
+    """Try to extract data assuming it's in a table format"""
+    measurements = []
+    
+    # Get text with detailed positioning
+    text_dict = page.get_text("dict")
+    
+    # Look for potential table rows
+    for block in text_dict.get("blocks", []):
+        if "lines" not in block:
+            continue
+            
+        for line in block["lines"]:
+            line_text = ""
+            for span in line.get("spans", []):
+                line_text += span.get("text", "") + " "
+            
+            line_text = line_text.strip()
+            if not line_text:
+                continue
+            
+            # Parse potential measurement line
+            parts = line_text.split()
+            if parts and parts[0].isdigit():
+                measurement = _parse_measurement_parts(parts)
+                if measurement:
+                    measurements.append(measurement)
+    
+    return measurements
 
 def extract_cavity_number_from_filename(filename):
+    """Extract cavity number from filename"""
     match = re.search(r'CAV-(\d+)', filename, re.IGNORECASE)
     if match:
         return f"CAV-{match.group(1)}"
     else:
         return os.path.splitext(os.path.basename(filename))[0]
 
-
 def process_pdf_data(pdf_data, filename):
+    """Process PDF data from memory - Updated version"""
     try:
         doc = fitz.open(stream=pdf_data, filetype="pdf")
     except Exception as e:
         raise Exception(f"Error opening PDF: {str(e)}")
 
     cavity_id = extract_cavity_number_from_filename(filename)
-
+    
+    # Extract header info from first page
     first_page_text = doc[0].get_text("text")
     header_data = extract_header_data(first_page_text)
-
+    
+    # Extract measurements from ALL pages
     all_measurements = []
     for page_num in range(len(doc)):
         page = doc[page_num]
-        measurements_on_page = extract_measurement_data_with_coords(page, page_num + 1)
-        all_measurements.extend(measurements_on_page)
+        measurements_on_page = extract_measurement_data_with_coords(page)
+        if measurements_on_page:
+            # Add page number for debugging
+            for measurement in measurements_on_page:
+                measurement['page'] = page_num
+            all_measurements.extend(measurements_on_page)
 
-    # Deduplicate by no + dimension
+    # Remove duplicates and sort
     unique_measurements = []
     seen = set()
-    for m in all_measurements:
-        key = (m["no"], m["dimension"])
+    for measurement in all_measurements:
+        # Create a tuple of key values for deduplication
+        key = (measurement['no'], measurement['dimension'])
         if key not in seen:
             seen.add(key)
-            unique_measurements.append(m)
-
+            unique_measurements.append(measurement)
+    
+    # Sort by measurement number
+    unique_measurements.sort(key=lambda x: int(x['no']) if x['no'].isdigit() else 0)
+    
     doc.close()
-
+    
     return {
         "cavity_id": cavity_id,
         "header_info": header_data,
         "measurements": unique_measurements
     }
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "PDF Processing API - Vercel"
+    })
 
 @app.route('/api/process-pdf', methods=['POST'])
 def process_pdf():
+    """Process PDF files - optimized for Vercel"""
     try:
+        # Check for files
         if 'files' not in request.files:
-            return jsonify({"error": "No files provided"}), 400
-
+            return jsonify({
+                "error": "No files provided",
+                "message": "Please upload PDF files using the 'files' field"
+            }), 400
+        
         files = request.files.getlist('files')
+        
         if not files or all(f.filename == '' for f in files):
-            return jsonify({"error": "No files selected"}), 400
-
+            return jsonify({
+                "error": "No files selected"
+            }), 400
+        
         all_data = {}
+        successful_extractions = 0
         errors = []
-        success_count = 0
-
+        
         for file in files:
-            filename = secure_filename(file.filename)
-            if not allowed_file(filename):
-                errors.append(f"{filename}: Invalid file type")
-                continue
-
-            pdf_data = file.read()
-            if len(pdf_data) > 10 * 1024 * 1024:
-                errors.append(f"{filename}: File too large (>10MB)")
-                continue
-
-            try:
-                result = process_pdf_data(pdf_data, filename)
-                cavity_id = result["cavity_id"]
-                all_data[cavity_id] = {
-                    "filename": filename,
-                    "header_info": result["header_info"],
-                    "measurements": result["measurements"],
-                    "processed_at": datetime.now().isoformat()
-                }
-                success_count += 1
-            except Exception as e:
-                errors.append(f"{filename}: {str(e)}")
-
-        if success_count == 0:
-            return jsonify({"error": "No files processed", "errors": errors}), 400
-
-        total_measurements = sum(len(v["measurements"]) for v in all_data.values())
+            if file and file.filename != '':
+                filename = secure_filename(file.filename)
+                
+                if not allowed_file(filename):
+                    errors.append(f"{filename}: Invalid file type")
+                    continue
+                
+                try:
+                    # Read file data into memory
+                    pdf_data = file.read()
+                    
+                    # Check file size (Vercel has memory limits)
+                    if len(pdf_data) > 10 * 1024 * 1024:  # 10MB
+                        errors.append(f"{filename}: File too large (>10MB)")
+                        continue
+                    
+                    # Process the PDF
+                    result = process_pdf_data(pdf_data, filename)
+                    
+                    cavity_id = result["cavity_id"]
+                    all_data[cavity_id] = {
+                        "filename": filename,
+                        "header_info": result["header_info"],
+                        "measurements": result["measurements"],
+                        "processed_at": datetime.now().isoformat()
+                    }
+                    successful_extractions += 1
+                    
+                except Exception as e:
+                    errors.append(f"{filename}: {str(e)}")
+                    continue
+        
+        if successful_extractions == 0:
+            return jsonify({
+                "error": "No files were successfully processed",
+                "errors": errors
+            }), 400
+        
+        # Calculate summary
+        total_measurements = sum(len(data['measurements']) for data in all_data.values())
+        
         response_data = {
             "success": True,
             "summary": {
-                "files_processed": success_count,
+                "files_processed": successful_extractions,
                 "total_files": len(files),
                 "cavities_found": list(all_data.keys()),
                 "total_measurements": total_measurements,
@@ -285,13 +390,21 @@ def process_pdf():
             },
             "data": all_data
         }
+        
         if errors:
             response_data["warnings"] = errors
+        
         return jsonify(response_data)
-
+        
     except Exception as e:
-        return jsonify({"error": "Internal server error", "message": str(e)}), 500
+        return jsonify({
+            "error": "Internal server error",
+            "message": str(e)
+        }), 500
 
+# CORRECTED: Proper Vercel export
+# Remove the incorrect handler function and use this instead:
+app = app  # Export the Flask app directly
 
 if __name__ == '__main__':
     app.run(debug=True)
