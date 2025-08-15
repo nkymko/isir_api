@@ -70,94 +70,86 @@ def extract_header_data(page_text):
     return header_info
 
 def extract_measurement_data_with_coords(page):
-    """Extract measurement data from PDF page - Simplified and corrected approach"""
+    """Extract measurement data from PDF page - Ultra simple regex approach"""
     measurements = []
     
     # Get the raw text from the page
     page_text = page.get_text()
-    print(f"DEBUG - Page text:\n{page_text}")  # Debug output
     
-    # Split into lines
+    # Based on your PDF, I can see these exact patterns:
+    # 1 Ø 10 +0.012 -0.5 Bottom 9.89
+    # 2 5 0 -0.01 4.99
+    # 3 2 +0.02 +0.01 2.002
+    # 4 4 -0,05 -0,1 4
+    # 5 BURR 0.1 0.05
+    # 6 11 0.3 11.1
+    
+    # Let's use specific regex patterns for each type
+    patterns = [
+        # Pattern 1: No Sym Dimension Upper Lower Pos MeasuredValue
+        r'(\d+)\s+(Ø|BURR)\s+([\d.,+-]+)\s+([\d.,+-]+)\s+([\d.,+-]+)\s+(\w+)\s+([\d.,]+)',
+        # Pattern 2: No Dimension Upper Lower MeasuredValue
+        r'(\d+)\s+([\d.,+-]+)\s+([\d.,+-]+)\s+([\d.,+-]+)\s+([\d.,]+)',
+        # Pattern 3: No Sym Value MeasuredValue (for BURR case)
+        r'(\d+)\s+(BURR)\s+([\d.,]+)\s+([\d.,]+)',
+        # Pattern 4: Simple No Value Value (minimal case)
+        r'(\d+)\s+([\d.,]+)\s+([\d.,]+)$'
+    ]
+    
     lines = page_text.split('\n')
-    
-    # Look for measurement data lines
-    for line_num, line in enumerate(lines):
+    for line in lines:
         line = line.strip()
-        if not line:
+        if not line or not line[0].isdigit():
             continue
             
-        print(f"DEBUG - Line {line_num}: '{line}'")  # Debug output
-        
-        # Skip header lines
-        if any(keyword in line.upper() for keyword in [
-            'NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 
-            'INDICATE', 'MEASURED', 'VENDOR', 'DENSO', 'ASSES'
-        ]):
-            continue
-        
-        # Check if line starts with a number (measurement row)
-        parts = line.split()
-        if not parts or not parts[0].isdigit():
-            continue
-            
-        print(f"DEBUG - Processing measurement line: {parts}")
-        
-        try:
-            # Parse the measurement line
-            no = parts[0]
-            
-            # Initialize all fields
-            sym = ""
-            dimension = ""
-            upper = ""
-            lower = ""
-            pos = ""
-            measured_by_vendor = ""
-            
-            # Current index in parts array
-            idx = 1
-            
-            # Check for symbol (Ø, BURR, etc.)
-            if idx < len(parts) and parts[idx] in ['Ø', 'ø', 'BURR', '⌀']:
-                sym = parts[idx]
-                idx += 1
-            
-            # Extract numeric and position values
-            remaining_parts = parts[idx:] if idx < len(parts) else []
-            
-            # Simple assignment based on position
-            if len(remaining_parts) >= 1:
-                dimension = remaining_parts[0]
-            if len(remaining_parts) >= 2:
-                upper = remaining_parts[1]
-            if len(remaining_parts) >= 3:
-                lower = remaining_parts[2]
-            if len(remaining_parts) >= 4:
-                # Check if this looks like a position or number
-                if remaining_parts[3].replace('.', '').replace(',', '').isdigit():
-                    measured_by_vendor = remaining_parts[3]
-                else:
-                    pos = remaining_parts[3]
-                    if len(remaining_parts) >= 5:
-                        measured_by_vendor = remaining_parts[4]
-            
-            # Create measurement record
-            measurement = {
-                "no": no,
-                "sym": sym,
-                "dimension": dimension,
-                "upper": upper,
-                "lower": lower,
-                "pos": pos,
-                "measured_by_vendor": measured_by_vendor
-            }
-            
-            print(f"DEBUG - Parsed measurement: {measurement}")
-            measurements.append(measurement)
-            
-        except Exception as e:
-            print(f"DEBUG - Error parsing line '{line}': {e}")
-            continue
+        # Try each pattern
+        for pattern_idx, pattern in enumerate(patterns):
+            match = re.search(pattern, line)
+            if match:
+                groups = match.groups()
+                
+                # Initialize measurement
+                measurement = {
+                    "no": groups[0],
+                    "sym": "",
+                    "dimension": "",
+                    "upper": "",
+                    "lower": "",
+                    "pos": "",
+                    "measured_by_vendor": ""
+                }
+                
+                # Pattern-specific parsing
+                if pattern_idx == 0:  # Full pattern with symbol and position
+                    measurement.update({
+                        "sym": groups[1],
+                        "dimension": groups[2],
+                        "upper": groups[3],
+                        "lower": groups[4],
+                        "pos": groups[5],
+                        "measured_by_vendor": groups[6]
+                    })
+                elif pattern_idx == 1:  # No symbol, no explicit position
+                    measurement.update({
+                        "dimension": groups[1],
+                        "upper": groups[2],
+                        "lower": groups[3],
+                        "measured_by_vendor": groups[4]
+                    })
+                elif pattern_idx == 2:  # BURR case
+                    measurement.update({
+                        "sym": groups[1],
+                        "dimension": groups[2],
+                        "measured_by_vendor": groups[3]
+                    })
+                elif pattern_idx == 3:  # Minimal case
+                    measurement.update({
+                        "dimension": groups[1],
+                        "measured_by_vendor": groups[2]
+                    })
+                
+                measurements.append(measurement)
+                break  # Found a match, move to next line
     
     return measurements
 
@@ -185,11 +177,9 @@ def process_pdf_data(pdf_data, filename):
     # Extract measurements from all pages
     all_measurements = []
     for page_num in range(len(doc)):
-        print(f"DEBUG - Processing page {page_num}")
         page = doc[page_num]
         measurements_on_page = extract_measurement_data_with_coords(page)
         if measurements_on_page:
-            print(f"DEBUG - Found {len(measurements_on_page)} measurements on page {page_num}")
             for measurement in measurements_on_page:
                 measurement['page'] = page_num
             all_measurements.extend(measurements_on_page)
@@ -204,8 +194,6 @@ def process_pdf_data(pdf_data, filename):
     # Convert back to list and sort
     final_measurements = list(unique_measurements.values())
     final_measurements.sort(key=lambda x: int(x['no']) if x['no'].isdigit() else 0)
-    
-    print(f"DEBUG - Final measurements: {final_measurements}")
     
     doc.close()
     
