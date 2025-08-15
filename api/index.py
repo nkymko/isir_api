@@ -110,7 +110,8 @@ def _parse_measurements_from_text(text):
                 measurement = _parse_measurement_parts(parts)
                 if measurement:
                     measurements.append(measurement)
-            except:
+            except Exception as e:
+                print(f"Error processing line: {line}, Error: {e}")
                 continue
     
     return measurements
@@ -144,6 +145,8 @@ def _parse_measurement_parts(parts):
         upper = parts[idx + 1] if idx + 1 < len(parts) else ""
         lower = parts[idx + 2] if idx + 2 < len(parts) else ""
         pos = parts[idx + 3] if idx + 3 < len(parts) else ""
+        
+        # Check if there are more parts for 'measured by vendor'
         measured_by_vendor = parts[idx + 4] if idx + 4 < len(parts) else ""
         
         return {
@@ -155,7 +158,8 @@ def _parse_measurement_parts(parts):
             "pos": pos,
             "measured_by_vendor": measured_by_vendor
         }
-    except:
+    except Exception as e:
+        print(f"Error parsing measurement parts: {e}")
         return None
 
 def _extract_from_words(words):
