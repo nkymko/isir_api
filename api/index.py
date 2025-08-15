@@ -84,36 +84,54 @@ def _is_numeric_value(text):
     except ValueError:
         return False
 
-def _parse_measurements_from_text(text):
-    """Parse measurements from raw text using regex patterns"""
-    measurements = []
+def _parse_measurement_parts(parts):
+    """
+    Parse measurement from a list of parts using flexible, right-to-left logic.
+    This is more robust against missing columns like 'Sym.' or 'Pos.'.
+    """
+    if len(parts) < 2:  # Must have at least a number and a measurement value
+        return None
+
+    # Initialize the dictionary to store results
+    measurement = {
+        "no": parts[0],
+        "sym": "",
+        "dimension": "",
+        "upper": "",
+        "lower": "",
+        "pos": "",
+        "measured_by_vendor": ""
+    }
+
+    # Use a copy of the parts, excluding the 'No.'
+    remaining_parts = parts[1:]
+
+    # 1. Get 'measured_by_vendor' (last item, if numeric)
+    if remaining_parts and _is_numeric_value(remaining_parts[-1]):
+        measurement['measured_by_vendor'] = remaining_parts.pop(-1)
+
+    # 2. Get 'pos' (the new last item, if it's NOT numeric)
+    if remaining_parts and not _is_numeric_value(remaining_parts[-1]):
+        measurement['pos'] = remaining_parts.pop(-1)
+
+    # 3. Process the rest (Sym, Dimension, Upper, Lower) from left to right
+    # Check for a 'Sym' (Symbol) which is typically non-numeric
+    if remaining_parts and not _is_numeric_value(remaining_parts[0]):
+        measurement['sym'] = remaining_parts.pop(0)
+
+    # Assign the rest in order
+    if len(remaining_parts) > 0:
+        measurement['dimension'] = remaining_parts.pop(0)
+    if len(remaining_parts) > 0:
+        measurement['upper'] = remaining_parts.pop(0)
+    if len(remaining_parts) > 0:
+        measurement['lower'] = remaining_parts.pop(0)
+
+    # Only return a valid measurement if the vendor value was found
+    if measurement['measured_by_vendor']:
+        return measurement
     
-    # Split text into lines
-    lines = text.split('\n')
-    
-    # Look for measurement patterns - more flexible regex
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        
-        # Skip header lines
-        if any(header in line.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
-            continue
-        
-        # Split line into parts
-        parts = line.split()
-        
-        # Check if this looks like a measurement line (starts with a number)
-        if parts and parts[0].isdigit():
-            try:
-                measurement = _parse_measurement_parts(parts)
-                if measurement:
-                    measurements.append(measurement)
-            except:
-                continue
-    
-    return measurements
+    return None
 
 def _parse_measurement_parts(parts):
     """Parse measurement from parts array"""
