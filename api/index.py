@@ -116,10 +116,6 @@ def _parse_measurements_from_text(text):
     return measurements
 
 def _parse_measurement_parts(parts):
-    """
-    Parse measurement from a list of parts using flexible, right-to-left logic.
-    This is more robust against missing columns like 'Sym.' or 'Pos.'.
-    """
     if len(parts) < 2:  # Must have at least a number and a measurement value
         return None
 
