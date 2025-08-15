@@ -85,35 +85,35 @@ def _is_numeric_value(text):
         return False
 
 def _parse_measurements_from_text(text):
-    """Parse measurements from raw text using regex patterns"""
-    measurements = []
-
-    # Split text into lines
-    lines = text.split('\n')
-
-    # Look for measurement patterns - more flexible regex
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        # Skip header lines
-        if any(header in line.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
-            continue
-
-        # Split line into parts
-        parts = line.split()
-
-        # Check if this looks like a measurement line (starts with a number)
-        if parts and parts[0].isdigit():
-            try:
-                measurement = _parse_measurement_parts(parts)
-                if measurement:
-                    measurements.append(measurement)
-            except:
-                continue
-
-    return measurements
+    """Parse measurements from raw text using regex patterns"""
+    measurements = []
+    
+    # Split text into lines
+    lines = text.split('\n')
+    
+    # Look for measurement patterns - more flexible regex
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Skip header lines
+        if any(header in line.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
+            continue
+        
+        # Split line into parts
+        parts = line.split()
+        
+        # Check if this looks like a measurement line (starts with a number)
+        if parts and parts[0].isdigit():
+            try:
+                measurement = _parse_measurement_parts(parts)
+                if measurement:
+                    measurements.append(measurement)
+            except:
+                continue
+    
+    return measurements
 
 def _parse_measurement_parts(parts):
     """
