@@ -31,36 +31,36 @@ def extract_header_data(page_text):
     """Extract header information from the text of the first page"""
     header_info = {}
     patterns = {
-        'supplier_name': r"Supplier name\s*(.*?)\s*(?:Part No|$)",
+        'supplier_name': r"Supplier name\s*(.*?)\s*Part No",
         'supplier_code': r"Supplier code No\.\s*(\S+)",
         'part_no': r"Part No\.\s*(\S+)",
-        'part_name': r"Part name\s*(.*?)\s*(?:Tooling No|$)",
-        'tooling_no': r"Tooling No\.?\s*(\S+)",
-        'cavity_no': r"Cavity No\.?\s*(\S+)",
-        'assy_name': r"ASSY \(SUB ASSY\) name\s*(.*?)\s*(?:Material|$)",
-        'material': r"Material\s*(.*?)\s*(?:Drawing standard|Material manufacturer|$)",
-        'material_manufacturer': r"Material manufacturer\s*(.*?)\s*(?:Grade Name|$)",
+        'part_name': r"Part name\s*(.*?)\s*Tooling No",
+        'tooling_no': r"Tooling No\.\s*(\S+)",
+        'cavity_no': r"Cavity No\.\s*(\S+)",
+        'assy_name': r"ASSY \(SUB ASSY\) name\s*(.*?)\s*Material\s",
+        'material': r"Material\s*(.*?)\s*Drawing standard",
+        'material_manufacturer': r"Material manufacturer\s*(.*?)\s*Grade Name",
         'grade_name': r"Grade Name\s*(\S+)",
         'dds2004_result': r"Result:\s*\[\s*(YES|NO)\s*\]"
     }
     
     for key, pattern in patterns.items():
-        match = re.search(pattern, page_text, re.DOTALL | re.IGNORECASE)
+        match = re.search(pattern, page_text, re.DOTALL)
         if match:
             header_info[key] = match.group(1).strip().replace('\n', ' ')
         else:
             header_info[key] = None
             
-    # RoHS data extraction - Fixed patterns
+    # RoHS data extraction
     rohs_data = {}
     rohs_patterns = {
-        'cd_result': r"Cd\s*<0\.01%\s*(Not Detected|Detected)",
-        'hg_result': r"Hg\s*<0\.1%\s*(Not Detected|Detected)", 
-        'pb_result': r"Pb\s*<0\.1%\s*(Not Detected|Detected)",
-        'cr6_result': r"Cr\s*6\+?\s*<0\.1%\s*(Not Detected|Detected)"
+        'cd_result': r"Cd\s*<0\.01%\s*(Not Detected)",
+        'hg_result': r"Hg\s*<0\.1%\s*(Not Detected)",
+        'pb_result': r"Pb\s*<0\.1%\s*(Not Detected)",
+        'cr6_result': r"Cr 6\+\s*<0\.1%\s*(Not Detected)"
     }
     for key, pattern in rohs_patterns.items():
-        match = re.search(pattern, page_text, re.DOTALL | re.IGNORECASE)
+        match = re.search(pattern, page_text, re.DOTALL)
         if match:
             rohs_data[key] = match.group(1).strip()
         else:
@@ -69,102 +69,52 @@ def extract_header_data(page_text):
     header_info['rohs_data'] = rohs_data
     return header_info
 
-def extract_measurement_data_improved(page):
-    """Improved measurement data extraction with better text parsing"""
+def extract_measurement_data_with_coords(page):
+    """Extract measurement data from PDF page"""
     measurements = []
-    
-    # Get all text with positions
-    text_dict = page.get_text("dict")
-    
-    # Also try direct text extraction to find the table
-    page_text = page.get_text()
-    
-    # Look for measurement table patterns in the text
-    # Pattern 1: Look for numbered rows with dimensions
-    lines = page_text.split('\n')
-    
-    measurement_lines = []
-    for i, line in enumerate(lines):
-        line = line.strip()
-        # Look for lines that start with a number and contain measurement data
-        if re.match(r'^\d+\s+', line):
-            measurement_lines.append(line)
-    
-    # Parse each measurement line
-    for line in measurement_lines:
-        parts = re.split(r'\s+', line.strip())
-        if len(parts) >= 4:
+    words = page.get_text("words")
+    lines = defaultdict(list)
+
+    for w in words:
+        lines[round(w[1])].append(w)
+
+    measurement_char_pattern = re.compile(r"^(?:\d{1,3}(?:\.\d+)?|[A-Za-z]{1,3}|[©شPपp04⌀∅⊕⊙○●◯◉⊗⊘∀∁∂∃∄∅∆∇∈∉∊∋∌∍∎∏∐∑−∓∔∕∖∗∘∙√∛∜∝∞∟∠∡∢∣∤∥∦∧∨∩∪∫∬∭∮∯∰∱∲∳∴∵∶∷∸∹∺∻∼∽∾∿≀≁≂≃≄≅≆≇≈≉≊≋≌≍≎≏≐≑≒≓≔≕≖≗≘≙≚≛≜≝≞≟≠≡≢≣≤≥≦≧≨≩≪≫≬≭≮≯≰≱≲≳≴≵≶≷≸≹≺≻≼≽≾≿⊀⊁⊂⊃⊄⊅⊆⊇⊈⊉⊊⊋⊌⊍⊎⊏⊐⊑⊒⊓⊔⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡⊢⊣⊤⊥⊦⊧⊨⊩⊪⊫⊬⊭⊮⊯⊰⊱⊲⊳⊴⊵⊶⊷⊸⊹⊺⊻⊼⊽⊾⊿⋀⋁⋂⋃⋄⋅⋆⋇⋈⋉⋊⋋⋌⋍⋎⋏⋐⋑⋒⋓⋔⋕⋖⋗⋘⋙⋚⋛⋜⋝⋞⋟⋠⋡⋢⋣⋤⋥⋦⋧⋨⋩⋪⋫⋬⋭⋮⋯⋰⋱⋲⋳⋴⋵⋶⋷⋸⋹⋺⋻⋼⋽⋾⋿φψχωΩαβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ℀℁ℂ℃℄℅℆ℇ℈℉ℊℋℌℍℎℏℐℑℒℓ℔ℕ№℗℘ℙℚℛℜℝ℞℟℠℡™℣ℤ℥Ω℧ℨ℩KÅℬℭ℮ℯℰℱℲℳℴℵℶℷℸℹ℺℻ℼℽℾℿ⅀⅁⅂⅃⅄ⅅⅆⅇⅈⅉ⅊⅋⅌⅍ⅎ⅏►◄▲▼◆◇○●◯◉⊗⊘△▲▽▼◁▷⧺⧻⦿⊙⊚⊛⊜⊝⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡]|[ĀĂĄĆĈĊČĎĐĒĔĖĘĚĜĞĠĢĤĦĨĪĬĮİĲĴĶĹĻĽĿŁŃŅŇŊŌŎŐŒŔŖŘŚŜŞŠŢŤŦŨŪŬŮŰŲŴŶŸŹŻŽ])$", re.UNICODE)
+
+    for y in sorted(lines.keys()):
+        line_words = sorted(lines[y], key=lambda w: w[0])
+        text_line = [w[4] for w in line_words if measurement_char_pattern.match(w[4])]
+
+        entries_to_process = []
+        
+        if 12 <= len(text_line) <= 14:
+            split_point = len(text_line) // 2
+            entries_to_process.append(text_line[:split_point])
+            entries_to_process.append(text_line[split_point:])
+        elif 6 <= len(text_line) <= 7:
+            entries_to_process.append(text_line)
+
+        if entries_to_process:
             try:
-                no = parts[0]
-                
-                # Find dimension value (look for numbers)
-                dimension = None
-                upper = None
-                lower = None
-                measured_by_vendor = None
-                sym = ""
-                
-                # Simple parsing for the example data
-                if len(parts) >= 6:
-                    dimension = parts[1]
-                    upper = parts[2] if parts[2] not in ['0', '-'] else None
-                    lower = parts[3] if parts[3] not in ['0', '-'] else None
-                    # Look for the measured value (usually the last numeric value)
-                    for part in parts[4:]:
-                        if re.match(r'^\d+\.?\d*$', part):
-                            measured_by_vendor = part
-                            break
-                
-                if dimension:
+                for entry_words in entries_to_process:
+                    no = entry_words.pop(0)
+                    sym = ""
+                    if not re.match(r'^\d+\.?\d*$', entry_words[0]):
+                        sym = entry_words.pop(0)
+                    
+                    dimension, upper, lower, pos, measured_by_vendor = entry_words
+
                     measurements.append({
                         "no": no,
                         "sym": sym,
                         "dimension": dimension,
                         "upper": upper,
                         "lower": lower,
-                        "pos": "",
-                        "measured_by_vendor": measured_by_vendor or ""
+                        "pos": pos,
+                        "measured_by_vendor": measured_by_vendor
                     })
-                    
             except (IndexError, ValueError):
                 continue
-    
-    # Alternative approach: Extract from the actual table structure
-    if not measurements:
-        # Look for table-like structures in the PDF
-        words = page.get_text("words")
-        
-        # Group words by approximate Y position (rows)
-        lines_dict = defaultdict(list)
-        for word in words:
-            y_pos = round(word[1], 0)  # Round Y position to group by lines
-            lines_dict[y_pos].append(word)
-        
-        # Sort lines by Y position
-        sorted_lines = sorted(lines_dict.items())
-        
-        for y_pos, word_list in sorted_lines:
-            # Sort words in line by X position
-            word_list.sort(key=lambda w: w[0])
-            line_text = ' '.join([w[4] for w in word_list])
-            
-            # Check if this looks like a measurement row
-            if re.match(r'^\d+\s+', line_text):
-                parts = line_text.split()
-                if len(parts) >= 3:
-                    try:
-                        measurements.append({
-                            "no": parts[0],
-                            "sym": "",
-                            "dimension": parts[1] if len(parts) > 1 else "",
-                            "upper": parts[2] if len(parts) > 2 else "",
-                            "lower": parts[3] if len(parts) > 3 else "",
-                            "pos": parts[4] if len(parts) > 4 else "",
-                            "measured_by_vendor": parts[5] if len(parts) > 5 else ""
-                        })
-                    except:
-                        continue
-    
+                
     return measurements
 
 def extract_cavity_number_from_filename(filename):
@@ -188,32 +138,16 @@ def process_pdf_data(pdf_data, filename):
     first_page_text = doc[0].get_text("text")
     header_data = extract_header_data(first_page_text)
     
-    # Debug: Print the extracted text to see what we're working with
-    print(f"First page text preview: {first_page_text[:500]}...")
-    
-    # Extract measurements from all pages (including first page)
+    # Extract measurements from other pages
     all_measurements = []
-    for page_num in range(len(doc)):
+    for page_num in range(1, len(doc)):
         page = doc[page_num]
-        measurements_on_page = extract_measurement_data_improved(page)
+        measurements_on_page = extract_measurement_data_with_coords(page)
         if measurements_on_page:
             all_measurements.extend(measurements_on_page)
-        
-        # Debug: Print page text to see structure
-        page_text = page.get_text()
-        print(f"Page {page_num} text preview: {page_text[:200]}...")
 
     # Remove duplicates and sort
-    unique_measurements = []
-    seen = set()
-    for measurement in all_measurements:
-        # Create a tuple of the measurement for deduplication
-        measurement_tuple = tuple(measurement.items())
-        if measurement_tuple not in seen:
-            seen.add(measurement_tuple)
-            unique_measurements.append(measurement)
-    
-    # Sort by number
+    unique_measurements = [dict(t) for t in {tuple(d.items()) for d in all_measurements}]
     unique_measurements.sort(key=lambda x: int(x['no']) if x['no'].isdigit() else 0)
     
     doc.close()
@@ -224,27 +158,6 @@ def process_pdf_data(pdf_data, filename):
         "measurements": unique_measurements
     }
 
-def debug_pdf_structure(pdf_data):
-    """Debug function to understand PDF structure"""
-    doc = fitz.open(stream=pdf_data, filetype="pdf")
-    
-    for page_num in range(len(doc)):
-        print(f"\n=== PAGE {page_num + 1} ===")
-        page = doc[page_num]
-        
-        # Print raw text
-        text = page.get_text()
-        print("Raw text:")
-        print(text)
-        
-        # Print words with positions
-        words = page.get_text("words")
-        print(f"\nFound {len(words)} words")
-        for i, word in enumerate(words[:10]):  # First 10 words
-            print(f"Word {i}: {word}")
-    
-    doc.close()
-
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -253,23 +166,6 @@ def health_check():
         "timestamp": datetime.now().isoformat(),
         "service": "PDF Processing API - Vercel"
     })
-
-@app.route('/api/debug-pdf', methods=['POST'])
-def debug_pdf():
-    """Debug endpoint to understand PDF structure"""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-    
-    try:
-        pdf_data = file.read()
-        debug_pdf_structure(pdf_data)
-        return jsonify({"message": "Debug output printed to console"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/process-pdf', methods=['POST'])
 def process_pdf():
@@ -359,6 +255,7 @@ def process_pdf():
         }), 500
 
 # CORRECTED: Proper Vercel export
+# Remove the incorrect handler function and use this instead:
 app = app  # Export the Flask app directly
 
 if __name__ == '__main__':
