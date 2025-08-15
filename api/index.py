@@ -84,6 +84,37 @@ def _is_numeric_value(text):
     except ValueError:
         return False
 
+def _parse_measurements_from_text(text):
+    """Parse measurements from raw text using regex patterns"""
+    measurements = []
+
+    # Split text into lines
+    lines = text.split('\n')
+
+    # Look for measurement patterns - more flexible regex
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Skip header lines
+        if any(header in line.upper() for header in ['NO.', 'SYM.', 'DIMENSION', 'UPPER', 'LOWER', 'POS.', 'INDICATE']):
+            continue
+
+        # Split line into parts
+        parts = line.split()
+
+        # Check if this looks like a measurement line (starts with a number)
+        if parts and parts[0].isdigit():
+            try:
+                measurement = _parse_measurement_parts(parts)
+                if measurement:
+                    measurements.append(measurement)
+            except:
+                continue
+
+    return measurements
+
 def _parse_measurement_parts(parts):
     """
     Parse measurement from a list of parts using flexible, right-to-left logic.
@@ -132,49 +163,6 @@ def _parse_measurement_parts(parts):
         return measurement
     
     return None
-
-def _parse_measurement_parts(parts):
-    """Parse measurement from parts array"""
-    if len(parts) < 4:  # Minimum: no, dimension, some values
-        return None
-    
-    try:
-        no = parts[0]
-        if not no.isdigit():
-            return None
-        
-        # Check for symbol
-        sym = ""
-        idx = 1
-        
-        # Common symbols to look for
-        symbol_indicators = ['Ø', 'ø', 'BURR', '⌀', 'φ']
-        if idx < len(parts) and any(symbol in parts[idx] for symbol in symbol_indicators):
-            sym = parts[idx]
-            idx += 1
-        elif idx < len(parts) and not _is_numeric_value(parts[idx]):
-            # If it's not numeric, it might be a symbol
-            sym = parts[idx]
-            idx += 1
-        
-        # Extract remaining fields with defaults
-        dimension = parts[idx] if idx < len(parts) else ""
-        upper = parts[idx + 1] if idx + 1 < len(parts) else ""
-        lower = parts[idx + 2] if idx + 2 < len(parts) else ""
-        pos = parts[idx + 3] if idx + 3 < len(parts) else ""
-        measured_by_vendor = parts[idx + 4] if idx + 4 < len(parts) else ""
-        
-        return {
-            "no": no,
-            "sym": sym,
-            "dimension": dimension,
-            "upper": upper,
-            "lower": lower,
-            "pos": pos,
-            "measured_by_vendor": measured_by_vendor
-        }
-    except:
-        return None
 
 def _extract_from_words(words):
     """Extract measurements by analyzing word positions"""
