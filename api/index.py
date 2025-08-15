@@ -116,49 +116,47 @@ def _parse_measurements_from_text(text):
     return measurements
 
 def _parse_measurement_parts(parts):
-    if len(parts) < 2:  # Must have at least a number and a measurement value
+    """Parse measurement from parts array"""
+    if len(parts) < 4:  # Minimum: no, dimension, some values
         return None
-
-    # Initialize the dictionary to store results
-    measurement = {
-        "no": parts[0],
-        "sym": "",
-        "dimension": "",
-        "upper": "",
-        "lower": "",
-        "pos": "",
-        "measured_by_vendor": ""
-    }
-
-    # Use a copy of the parts, excluding the 'No.'
-    remaining_parts = parts[1:]
-
-    # 1. Get 'measured_by_vendor' (last item, if numeric)
-    if remaining_parts and _is_numeric_value(remaining_parts[-1]):
-        measurement['measured_by_vendor'] = remaining_parts.pop(-1)
-
-    # 2. Get 'pos' (the new last item, if it's NOT numeric)
-    if remaining_parts and not _is_numeric_value(remaining_parts[-1]):
-        measurement['pos'] = remaining_parts.pop(-1)
-
-    # 3. Process the rest (Sym, Dimension, Upper, Lower) from left to right
-    # Check for a 'Sym' (Symbol) which is typically non-numeric
-    if remaining_parts and not _is_numeric_value(remaining_parts[0]):
-        measurement['sym'] = remaining_parts.pop(0)
-
-    # Assign the rest in order
-    if len(remaining_parts) > 0:
-        measurement['dimension'] = remaining_parts.pop(0)
-    if len(remaining_parts) > 0:
-        measurement['upper'] = remaining_parts.pop(0)
-    if len(remaining_parts) > 0:
-        measurement['lower'] = remaining_parts.pop(0)
-
-    # Only return a valid measurement if the vendor value was found
-    if measurement['measured_by_vendor']:
-        return measurement
     
-    return None
+    try:
+        no = parts[0]
+        if not no.isdigit():
+            return None
+        
+        # Check for symbol
+        sym = ""
+        idx = 1
+        
+        # Common symbols to look for
+        symbol_indicators = ['Ø', 'ø', 'BURR', '⌀', 'φ']
+        if idx < len(parts) and any(symbol in parts[idx] for symbol in symbol_indicators):
+            sym = parts[idx]
+            idx += 1
+        elif idx < len(parts) and not _is_numeric_value(parts[idx]):
+            # If it's not numeric, it might be a symbol
+            sym = parts[idx]
+            idx += 1
+        
+        # Extract remaining fields with defaults
+        dimension = parts[idx] if idx < len(parts) else ""
+        upper = parts[idx + 1] if idx + 1 < len(parts) else ""
+        lower = parts[idx + 2] if idx + 2 < len(parts) else ""
+        pos = parts[idx + 3] if idx + 3 < len(parts) else ""
+        measured_by_vendor = parts[idx + 4] if idx + 4 < len(parts) else ""
+        
+        return {
+            "no": no,
+            "sym": sym,
+            "dimension": dimension,
+            "upper": upper,
+            "lower": lower,
+            "pos": pos,
+            "measured_by_vendor": measured_by_vendor
+        }
+    except:
+        return None
 
 def _extract_from_words(words):
     """Extract measurements by analyzing word positions"""
