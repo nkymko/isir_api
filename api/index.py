@@ -70,102 +70,181 @@ def extract_header_data(page_text):
     return header_info
 
 def extract_measurement_data_improved(page):
-    """Improved measurement data extraction with better text parsing"""
+    """Improved measurement data extraction with better table structure detection"""
     measurements = []
     
-    # Get all text with positions
-    text_dict = page.get_text("dict")
-    
-    # Also try direct text extraction to find the table
+    # Get page text
     page_text = page.get_text()
     
-    # Look for measurement table patterns in the text
-    # Pattern 1: Look for numbered rows with dimensions
-    lines = page_text.split('\n')
+    # First, try to find the table headers to understand column positions
+    header_pattern = r'No\.\s+Sym\.\s+Dimension\s+Upper\s+Lower\s+Pos\.\s+.*(?:Measured|by)'
+    header_match = re.search(header_pattern, page_text, re.IGNORECASE)
     
-    measurement_lines = []
-    for i, line in enumerate(lines):
-        line = line.strip()
-        # Look for lines that start with a number and contain measurement data
-        if re.match(r'^\d+\s+', line):
-            measurement_lines.append(line)
+    if not header_match:
+        print("Could not find table headers")
+        return extract_measurement_data_fallback(page)
     
-    # Parse each measurement line
-    for line in measurement_lines:
-        parts = re.split(r'\s+', line.strip())
-        if len(parts) >= 4:
-            try:
-                no = parts[0]
-                
-                # Find dimension value (look for numbers)
-                dimension = None
-                upper = None
-                lower = None
-                measured_by_vendor = None
-                sym = ""
-                
-                # Simple parsing for the example data
-                if len(parts) >= 6:
-                    dimension = parts[1]
-                    upper = parts[2] if parts[2] not in ['0', '-'] else None
-                    lower = parts[3] if parts[3] not in ['0', '-'] else None
-                    # Look for the measured value (usually the last numeric value)
-                    for part in parts[4:]:
-                        if re.match(r'^\d+\.?\d*$', part):
-                            measured_by_vendor = part
-                            break
-                
-                if dimension:
-                    measurements.append({
-                        "no": no,
-                        "sym": sym,
-                        "dimension": dimension,
-                        "upper": upper,
-                        "lower": lower,
-                        "pos": "",
-                        "measured_by_vendor": measured_by_vendor or ""
-                    })
-                    
-            except (IndexError, ValueError):
-                continue
+    # Get text with word positions for better parsing
+    words = page.get_text("words")
     
-    # Alternative approach: Extract from the actual table structure
-    if not measurements:
-        # Look for table-like structures in the PDF
-        words = page.get_text("words")
-        
-        # Group words by approximate Y position (rows)
-        lines_dict = defaultdict(list)
-        for word in words:
-            y_pos = round(word[1], 0)  # Round Y position to group by lines
-            lines_dict[y_pos].append(word)
-        
-        # Sort lines by Y position
-        sorted_lines = sorted(lines_dict.items())
-        
-        for y_pos, word_list in sorted_lines:
-            # Sort words in line by X position
-            word_list.sort(key=lambda w: w[0])
-            line_text = ' '.join([w[4] for w in word_list])
+    # Group words by Y position (rows) with some tolerance
+    rows = defaultdict(list)
+    for word in words:
+        x, y0, x1, y1, text, block_no, line_no, word_no = word
+        # Round Y position to group words in same row
+        row_key = round(y0 / 2) * 2  # Group with 2-point tolerance
+        rows[row_key].append({
+            'x': x,
+            'text': text,
+            'word_data': word
+        })
+    
+    # Sort rows by Y position
+    sorted_rows = sorted(rows.items())
+    
+    # Find header row to establish column positions
+    header_row = None
+    header_y = None
+    
+    for y_pos, word_list in sorted_rows:
+        row_text = ' '.join([w['text'] for w in sorted(word_list, key=lambda x: x['x'])])
+        if re.search(r'No\.\s+Sym\.\s+Dimension', row_text, re.IGNORECASE):
+            header_row = word_list
+            header_y = y_pos
+            break
+    
+    if not header_row:
+        print("Could not find header row")
+        return extract_measurement_data_fallback(page)
+    
+    # Establish column positions from header
+    header_sorted = sorted(header_row, key=lambda x: x['x'])
+    column_positions = {}
+    
+    for word in header_sorted:
+        text = word['text'].lower().strip('.')
+        if 'no' in text:
+            column_positions['no'] = word['x']
+        elif 'sym' in text:
+            column_positions['sym'] = word['x']
+        elif 'dimension' in text:
+            column_positions['dimension'] = word['x']
+        elif 'upper' in text:
+            column_positions['upper'] = word['x']
+        elif 'lower' in text:
+            column_positions['lower'] = word['x']
+        elif 'pos' in text:
+            column_positions['pos'] = word['x']
+        elif 'measured' in text or 'vendor' in text:
+            column_positions['measured_by_vendor'] = word['x']
+    
+    print(f"Found column positions: {column_positions}")
+    
+    # Process data rows (after header)
+    for y_pos, word_list in sorted_rows:
+        if y_pos <= header_y:
+            continue  # Skip header and above
             
-            # Check if this looks like a measurement row
-            if re.match(r'^\d+\s+', line_text):
-                parts = line_text.split()
-                if len(parts) >= 3:
-                    try:
-                        measurements.append({
-                            "no": parts[0],
-                            "sym": "",
-                            "dimension": parts[1] if len(parts) > 1 else "",
-                            "upper": parts[2] if len(parts) > 2 else "",
-                            "lower": parts[3] if len(parts) > 3 else "",
-                            "pos": parts[4] if len(parts) > 4 else "",
-                            "measured_by_vendor": parts[5] if len(parts) > 5 else ""
-                        })
-                    except:
-                        continue
+        # Sort words in row by X position
+        row_words = sorted(word_list, key=lambda x: x['x'])
+        row_text = ' '.join([w['text'] for w in row_words])
+        
+        # Check if this looks like a data row (starts with number)
+        if not re.match(r'^\d+', row_text.strip()):
+            continue
+            
+        # Extract data by assigning words to columns based on position
+        measurement = {
+            "no": "",
+            "sym": "",
+            "dimension": "",
+            "upper": "",
+            "lower": "",
+            "pos": "",
+            "measured_by_vendor": ""
+        }
+        
+        # Assign each word to the closest column
+        for word in row_words:
+            word_x = word['x']
+            word_text = word['text'].strip()
+            
+            if not word_text:
+                continue
+                
+            # Find the closest column
+            closest_column = None
+            min_distance = float('inf')
+            
+            for col_name, col_x in column_positions.items():
+                distance = abs(word_x - col_x)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_column = col_name
+            
+            # Assign to closest column if within reasonable distance
+            if closest_column and min_distance < 50:  # 50 point tolerance
+                if measurement[closest_column]:  # If column already has value, append
+                    measurement[closest_column] += " " + word_text
+                else:
+                    measurement[closest_column] = word_text
+        
+        # Only add if we have at least a number and dimension
+        if measurement["no"] and measurement["dimension"]:
+            measurements.append(measurement)
+            print(f"Extracted: {measurement}")
     
     return measurements
+
+
+def extract_measurement_data_fallback(page):
+    """Fallback method using regex patterns"""
+    measurements = []
+    page_text = page.get_text()
+    
+    # Try to extract table section
+    table_match = re.search(r'No\.\s+Sym\..*?(?=Notes|$)', page_text, re.DOTALL | re.IGNORECASE)
+    if not table_match:
+        return measurements
+    
+    table_text = table_match.group(0)
+    lines = table_text.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        # Look for lines starting with a number
+        if re.match(r'^\d+\s', line):
+            # More flexible parsing
+            parts = re.split(r'\s+', line)
+            if len(parts) >= 2:
+                measurement = {
+                    "no": parts[0],
+                    "sym": "",
+                    "dimension": "",
+                    "upper": "",
+                    "lower": "",
+                    "pos": "",
+                    "measured_by_vendor": ""
+                }
+                
+                # Try to identify parts by patterns
+                for i, part in enumerate(parts[1:], 1):
+                    if i == 1 and not re.match(r'^[\d\.\+\-]+$', part):
+                        measurement["sym"] = part
+                    elif re.match(r'^\d+\.?\d*$', part) and not measurement["dimension"]:
+                        measurement["dimension"] = part
+                    elif re.match(r'^[\+\-]\d+\.?\d*$', part):
+                        if not measurement["upper"]:
+                            measurement["upper"] = part
+                        elif not measurement["lower"]:
+                            measurement["lower"] = part
+                    elif re.match(r'^\d+\.?\d*$', part) and measurement["dimension"]:
+                        measurement["measured_by_vendor"] = part
+                
+                measurements.append(measurement)
+    
+    return measurements
+
 
 def extract_cavity_number_from_filename(filename):
     """Extract cavity number from filename"""
@@ -224,26 +303,35 @@ def process_pdf_data(pdf_data, filename):
         "measurements": unique_measurements
     }
 
-def debug_pdf_structure(pdf_data):
-    """Debug function to understand PDF structure"""
-    doc = fitz.open(stream=pdf_data, filetype="pdf")
+def debug_pdf_table_structure(page):
+    """Enhanced debug function to understand table structure"""
+    print("\n=== DEBUGGING TABLE STRUCTURE ===")
     
-    for page_num in range(len(doc)):
-        print(f"\n=== PAGE {page_num + 1} ===")
-        page = doc[page_num]
-        
-        # Print raw text
-        text = page.get_text()
-        print("Raw text:")
-        print(text)
-        
-        # Print words with positions
-        words = page.get_text("words")
-        print(f"\nFound {len(words)} words")
-        for i, word in enumerate(words[:10]):  # First 10 words
-            print(f"Word {i}: {word}")
+    # Print raw text with line numbers
+    text = page.get_text()
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        if 'No.' in line or re.match(r'^\d+\s', line.strip()):
+            print(f"Line {i}: '{line}'")
     
-    doc.close()
+    # Print words with positions
+    words = page.get_text("words")
+    print(f"\n=== WORDS WITH POSITIONS ===")
+    
+    # Group words by approximate Y position
+    rows = defaultdict(list)
+    for word in words:
+        x, y0, x1, y1, text, block_no, line_no, word_no = word
+        row_key = round(y0 / 2) * 2
+        rows[row_key].append((x, text))
+    
+    # Show a few rows around the table
+    sorted_rows = sorted(rows.items())
+    for y_pos, word_list in sorted_rows:
+        row_text = ' '.join([w[1] for w in sorted(word_list, key=lambda x: x[0])])
+        if 'No.' in row_text or re.match(r'^\d+', row_text.strip()):
+            print(f"Y={y_pos}: {[(x, text) for x, text in sorted(word_list, key=lambda x: x[0])]}")
+            print(f"   Text: '{row_text}'")
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
