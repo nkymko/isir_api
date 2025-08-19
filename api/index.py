@@ -69,40 +69,72 @@ def extract_header_data(page_text):
     header_info['rohs_data'] = rohs_data
     return header_info
 
-def extract_table_data_from_page(page):
-    """Extract measurement data from a PDF page with dual-column format"""
+def extract_measurement_data_with_coords(page):
+    """Extract measurement data from PDF page using coordinate-based method"""
     measurements = []
-    
-    # Get all text with coordinates
     words = page.get_text("words")
-    
-    # Group words by lines (similar Y coordinates)
     lines = defaultdict(list)
-    tolerance = 3
-    
-    for word in words:
-        x, y0, x1, y1, text, block_no, line_no, word_no = word
-        text = text.strip()
-        if text:
-            line_key = round(y0 / tolerance) * tolerance
-            lines[line_key].append({
-                'text': text,
-                'x': x,
-                'y': y0
-            })
-    
-    # Process each line
-    for y in sorted(lines.keys(), reverse=True):  # Top to bottom
-        line_words = sorted(lines[y], key=lambda w: w['x'])  # Left to right
-        texts = [w['text'] for w in line_words]
+
+    # Group words by y-coordinate (line)
+    for w in words:
+        lines[round(w[1])].append(w)
+
+    # Pattern to identify measurement-related characters
+    measurement_char_pattern = re.compile(r"^(?:\d{1,3}(?:\.\d+)?|[A-Za-z]{1,3}|[©شPपp04⌀∅⊕⊙○●◯◉⊗⊘∀∁∂∃∄∅∆∇∈∉∊∋∌∍∎∏∐∑−∓∔∕∖∗∘∙√∛∜∝∞∟∠∡∢∣∤∥∦∧∨∩∪∫∬∭∮∯∰∱∲∳∴∵∶∷∸∹∺∻∼∽∾∿≀≁≂≃≄≅≆≇≈≉≊≋≌≍≎≏≐≑≒≓≔≕≖≗≘≙≚≛≜≝≞≟≠≡≢≣≤≥≦≧≨≩≪≫≬≭≮≯≰≱≲≳≴≵≶≷≸≹≺≻≼≽≾≿⊀⊁⊂⊃⊄⊅⊆⊇⊈⊉⊊⊋⊌⊍⊎⊏⊐⊑⊒⊓⊔⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡⊢⊣⊤⊥⊦⊧⊨⊩⊪⊫⊬⊭⊮⊯⊰⊱⊲⊳⊴⊵⊶⊷⊸⊹⊺⊻⊼⊽⊾⊿⋀⋁⋂⋃⋄⋅⋆⋇⋈⋉⋊⋋⋌⋍⋎⋏⋐⋑⋒⋓⋔⋕⋖⋗⋘⋙⋚⋛⋜⋝⋞⋟⋠⋡⋢⋣⋤⋥⋦⋧⋨⋩⋪⋫⋬⋭⋮⋯⋰⋱⋲⋳⋴⋵⋶⋷⋸⋹⋺⋻⋼⋽⋾⋿φψχωΩαβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ℀℁ℂ℃℄℅℆ℇ℈℉ℊℋℌℍℎℏℐℑℒℓ℔ℕ№℗℘ℙℚℛℜℝ℞℟℠℡™℣ℤ℥Ω℧ℨ℩KÅℬℭ℮ℯℰℱℲℳℴℵℶℷℸℹ℺℻ℼℽℾℿ⅀⅁⅂⅃⅄ⅅⅆⅇⅈⅉ⅊⅋⅌⅍ⅎ⅏►◄▲▼◆◇○●◯◉⊗⊘△▲▽▼◁▷⧺⧻⦿⊙⊚⊛⊜⊝⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡]|[ĀĂĄĆĈĊČĎĐĒĔĖĘĚĜĞĠĢĤĦĨĪĬĮİĲĴĶĹĻĽĿŁŃŅŇŊŌŎŐŒŔŖŘŚŜŞŠŢŤŦŨŪŬŮŰŲŴŶŸŹŻŽ])$", re.UNICODE)
+
+    for y in sorted(lines.keys()):
+        line_words = sorted(lines[y], key=lambda w: w[0])
+        text_line = [w[4] for w in line_words if measurement_char_pattern.match(w[4])]
+
+        entries_to_process = []
         
-        if len(texts) < 3:  # Skip lines with too few elements
-            continue
-            
-        # Look for measurement rows (containing row numbers)
-        row_data = parse_measurement_row(texts)
-        measurements.extend(row_data)
-    
+        # Handle lines with multiple measurements
+        if 12 <= len(text_line) <= 14:
+            split_point = len(text_line) // 2
+            entries_to_process.append(text_line[:split_point])
+            entries_to_process.append(text_line[split_point:])
+        elif 6 <= len(text_line) <= 7:
+            entries_to_process.append(text_line)
+
+        if entries_to_process:
+            try:
+                for entry_words in entries_to_process:
+                    if len(entry_words) < 2:
+                        continue
+                        
+                    no = entry_words.pop(0)
+                    sym = ""
+                    
+                    # Check if next item is a symbol
+                    if entry_words and not re.match(r'^\d+\.?\d*$', entry_words[0]):
+                        sym = entry_words.pop(0)
+                    
+                    # Handle cases where we might have more fields
+                    if len(entry_words) >= 5:
+                        dimension = entry_words[0] if len(entry_words) > 0 else ""
+                        upper = entry_words[1] if len(entry_words) > 1 else ""
+                        lower = entry_words[2] if len(entry_words) > 2 else ""
+                        pos = entry_words[3] if len(entry_words) > 3 else ""
+                        measured_by_vendor = entry_words[4] if len(entry_words) > 4 else ""
+                        
+                        # Check for additional fields (DENSO measurement and assessment)
+                        measured_by_denso = entry_words[5] if len(entry_words) > 5 else ""
+                        assessment = entry_words[6] if len(entry_words) > 6 else ""
+
+                        measurements.append({
+                            "no": no,
+                            "sym": sym,
+                            "dimension": dimension,
+                            "upper": upper,
+                            "lower": lower,
+                            "pos": pos,
+                            "measured_by_vendor": measured_by_vendor,
+                            "measured_by_denso": measured_by_denso,
+                            "assessment": assessment
+                        })
+            except (IndexError, ValueError):
+                continue
+                
     return measurements
 
 def parse_measurement_row(texts):
@@ -218,6 +250,30 @@ def parse_single_measurement(row_texts):
         measurement['assessment'] = remaining[idx]
     
     return measurement
+
+def extract_table_data_from_page(page):
+    """Extract table data from PDF page using improved text parsing"""
+    try:
+        # Try the coordinate-based method first
+        measurements = extract_measurement_data_with_coords(page)
+        
+        # If that doesn't work, fall back to simple text extraction
+        if not measurements:
+            text = page.get_text()
+            lines = text.split('\n')
+            
+            for line in lines:
+                # Look for lines that start with numbers (measurement rows)
+                if re.match(r'^\d+\s+', line.strip()):
+                    texts = line.split()
+                    parsed_measurements = parse_measurement_row(texts)
+                    measurements.extend(parsed_measurements)
+        
+        return measurements
+        
+    except Exception as e:
+        print(f"Error extracting table data: {str(e)}")
+        return []
 
 def extract_cavity_number_from_filename(filename):
     """Extract cavity number from filename"""
@@ -366,9 +422,6 @@ def process_pdf():
             "message": str(e)
         }), 500
 
-# CORRECTED: Proper Vercel export
-# Export the Flask app directly for Vercel
-app = app
-
+# Export the Flask app for Vercel
 if __name__ == '__main__':
     app.run(debug=True)
