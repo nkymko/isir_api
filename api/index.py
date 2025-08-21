@@ -69,8 +69,113 @@ def extract_header_data(page_text):
     header_info['rohs_data'] = rohs_data
     return header_info
 
+def debug_table_structure(page, max_lines=5):
+    """Helper function to analyze table structure for debugging"""
+    words = page.get_text("words")
+    lines = defaultdict(list)
+    
+    for w in words:
+        lines[round(w[1])].append(w)
+    
+    debug_info = []
+    for y in sorted(lines.keys())[:max_lines]:
+        line_words = sorted(lines[y], key=lambda w: w[0])
+        positions = [f"{w[0]:.0f}" for w in line_words]
+        texts = [w[4] for w in line_words]
+        debug_info.append({
+            'y_position': y,
+            'x_positions': positions,
+            'texts': texts
+        })
+    
+    return debug_info
+
+def align_columns_with_positions(line_words, measurement_pattern, expected_columns=7):
+    """
+    Align words to columns based on X-coordinate positions
+    This helps handle null/missing columns properly
+    """
+    # Filter words that match measurement pattern
+    filtered_words = [(w[0], w[4]) for w in line_words if measurement_pattern.match(w[4])]
+    
+    if len(filtered_words) < 5:  # Need at least 5 columns (no, dimension, upper, lower, pos)
+        return None
+    
+    # Auto-detect column positions from the data
+    # Sort by X position and try to identify column boundaries
+    x_positions = [word[0] for word in filtered_words]
+    x_positions.sort()
+    
+    # Define expected column positions based on typical table layouts
+    # You may need to adjust these based on your specific PDF format
+    if len(filtered_words) >= 6:
+        # Try to auto-detect column positions
+        step = (x_positions[-1] - x_positions[0]) / 6
+        expected_positions = [x_positions[0] + i * step for i in range(7)]
+    else:
+        # Fallback to fixed positions - adjust these values based on your PDF
+        expected_positions = [50, 120, 200, 280, 360, 440, 520]
+    
+    tolerance = 40  # Position tolerance - may need adjustment
+    
+    # Map words to columns based on X-position
+    columns = [''] * expected_columns
+    used_positions = set()
+    
+    for x_pos, text in filtered_words:
+        best_col = None
+        min_distance = float('inf')
+        
+        for i, expected_x in enumerate(expected_positions[:expected_columns]):
+            distance = abs(x_pos - expected_x)
+            if distance < tolerance and distance < min_distance and i not in used_positions:
+                min_distance = distance
+                best_col = i
+        
+        if best_col is not None:
+            columns[best_col] = text
+            used_positions.add(best_col)
+    
+    return columns if columns[0] and re.match(r'^\d+\.?\d*$', columns[0]) else None
+
+def parse_measurement_entry_safe(columns):
+    """
+    Parse a measurement entry from column data, handling empty values safely
+    """
+    # Ensure we have at least 7 slots
+    clean_columns = (columns + [''] * 7)[:7]
+    
+    no = clean_columns[0] if clean_columns[0] else ''
+    
+    # Check if second column is a symbol or dimension
+    sym = ''
+    dimension_index = 1
+    
+    if clean_columns[1] and not re.match(r'^[\d.-]+$', clean_columns[1]) and len(clean_columns[1]) <= 3:
+        sym = clean_columns[1]
+        dimension_index = 2
+    
+    # Extract remaining fields, handling empty values
+    dimension = clean_columns[dimension_index] if len(clean_columns) > dimension_index else ''
+    upper = clean_columns[dimension_index + 1] if len(clean_columns) > dimension_index + 1 else ''
+    lower = clean_columns[dimension_index + 2] if len(clean_columns) > dimension_index + 2 else ''
+    pos = clean_columns[dimension_index + 3] if len(clean_columns) > dimension_index + 3 else ''
+    measured_by_vendor = clean_columns[dimension_index + 4] if len(clean_columns) > dimension_index + 4 else ''
+    
+    return {
+        "no": no,
+        "sym": sym,
+        "dimension": dimension,
+        "upper": upper,
+        "lower": lower,
+        "pos": pos,
+        "measured_by_vendor": measured_by_vendor
+    }
+
 def extract_measurement_data_with_coords(page):
-    """Extract measurement data from PDF page - improved to handle multiple formats"""
+    """
+    IMPROVED: Extract measurement data from PDF page with better null column handling
+    """
     measurements = []
     words = page.get_text("words")
     lines = defaultdict(list)
@@ -78,127 +183,58 @@ def extract_measurement_data_with_coords(page):
     for w in words:
         lines[round(w[1])].append(w)
 
-    # Enhanced pattern to match measurement characters and symbols
     measurement_char_pattern = re.compile(
-        r"^(?:\d{1,3}(?:\.\d+)?|[A-Za-z]{1,3}|[©شPपp04⌀∅⊕⊙○●◯◉⊗⊘∀∁∂∃∄∅∆∇∈∉∊∋∌∍∎∏∐∑−∓∔∕∖∗∘∙√∛∜∝∞∟∠∡∢∣∤∥∦∧∨∩∪∫∬∭∮∯∰∱∲∳∴∵∶∷∸∹∺∻∼∽∾∿≀≁≂≃≄≅≆≇≈≉≊≋≌≍≎≏≐≑≒≓≔≕≖≗≘≙≚≛≜≝≞≟≠≡≢≣≤≥≦≧≨≩≪≫≬≭≮≯≰≱≲≳≴≵≶≷≸≹≺≻≼≽≾≿⊀⊁⊂⊃⊄⊅⊆⊇⊈⊉⊊⊋⊌⊍⊎⊏⊐⊑⊒⊓⊔⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡⊢⊣⊤⊥⊦⊧⊨⊩⊪⊫⊬⊭⊮⊯⊰⊱⊲⊳⊴⊵⊶⊷⊸⊹⊺⊻⊼⊽⊾⊿⋀⋁⋂⋃⋄⋅⋆⋇⋈⋉⋊⋋⋌⋍⋎⋏⋐⋑⋒⋓⋔⋕⋖⋗⋘⋙⋚⋛⋜⋝⋞⋟⋠⋡⋢⋣⋤⋥⋦⋧⋨⋩⋪⋫⋬⋭⋮⋯⋰⋱⋲⋳⋴⋵⋶⋷⋸⋹⋺⋻⋼⋽⋾⋿φψχωΩαβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ℀℁ℂ℃℄℅℆ℇ℈℉ℊℋℌℍℎℏℐℑℒℓ℔ℕ№℗℘ℙℚℛℜℝ℞℟℠℡™℣ℤ℥Ω℧ℨ℩KÅℬℭ℮ℯℰℱℲℳℴℵℶℷℸℹ℺℻ℼℽℾℿ⅀⅁⅂⅃⅄ⅅⅆⅇⅈⅉ⅊⅋⅌⅍ⅎ⅏►◄▲▼◆◇○●◯◉⊗⊘△▲▽▼◁▷⧺⧻⦿⊙⊚⊛⊜⊝⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡Ø]|[ĀĂĄĆĈĊČĎĐĒĔĖĘĚĜĞĠĢĤĦĨĪĬĮİĲĴĶĹĻĽĿŁŃŅŇŊŌŎŐŒŔŖŘŚŜŞŠŢŤŦŨŪŬŮŰŲŴŶŸŹŻŽ]|BURR|\+\d|\-\d)$", 
+        r"^(?:\d{1,3}(?:\.\d+)?|[A-Za-z]{1,3}|[⋟⋠⋡ΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ℀℁ℂ℃℄℅℆ℇ℈℉ℊℋℌℍℎℏℐℑℒℓ℔ℕ№℗℘ℙℚℛℜℝ℞℟℠℡™℣ℤ℥Ω℧ⅎ⅏►◄▲▼ŴŶŸŹŻŽ]|[-−])$", 
         re.UNICODE
     )
 
-    # Enhanced number/value pattern to catch decimals, tolerances, and positions
-    value_pattern = re.compile(r'^[+-]?\d+(?:[.,]\d+)?(?:[+-]\d+(?:[.,]\d+)?)*$|^Bottom$|^Top$|^Left$|^Right$|^Center$')
-
     for y in sorted(lines.keys()):
         line_words = sorted(lines[y], key=lambda w: w[0])
-        text_line = [w[4] for w in line_words if measurement_char_pattern.match(w[4]) or value_pattern.match(w[4])]
-
-        if len(text_line) < 4:  # Skip lines with too few elements
-            continue
-
+        
+        # Method 1: Try position-based alignment first
+        aligned_columns = align_columns_with_positions(line_words, measurement_char_pattern)
+        
+        if aligned_columns:
+            try:
+                measurement = parse_measurement_entry_safe(aligned_columns)
+                if measurement['no']:  # Only add if we have a valid number
+                    measurements.append(measurement)
+                continue
+            except Exception:
+                pass
+        
+        # Method 2: Fallback to original method with improvements
+        text_line = [w[4] for w in line_words if measurement_char_pattern.match(w[4])]
+        
         entries_to_process = []
         
-        # Handle different line formats
-        if 12 <= len(text_line) <= 14:
-            # Format like T4E CAV-1: split into two measurements per line
+        # Handle different line lengths more flexibly
+        if 12 <= len(text_line) <= 16:  # Extended range to handle more variations
             split_point = len(text_line) // 2
             entries_to_process.append(text_line[:split_point])
             entries_to_process.append(text_line[split_point:])
-        elif 6 <= len(text_line) <= 7:
-            # Format like T4E CAV-1: single measurement per line
-            entries_to_process.append(text_line)
-        elif 4 <= len(text_line) <= 6:
-            # Format like T1 Teste CAV-4: different structure
+        elif 5 <= len(text_line) <= 8:  # More flexible range
             entries_to_process.append(text_line)
 
-        for entry_words in entries_to_process:
-            try:
-                # Try to extract measurement data
-                if len(entry_words) >= 4:
-                    no = entry_words[0]
-                    
-                    # Skip if first element is not a number (measurement ID)
-                    if not re.match(r'^\d+$', no):
+        if entries_to_process:
+            for entry_words in entries_to_process:
+                try:
+                    # Ensure we have enough elements
+                    if len(entry_words) < 5:
                         continue
-                    
-                    remaining = entry_words[1:]
-                    sym = ""
-                    
-                    # Check if second element is a symbol
-                    if remaining and not value_pattern.match(remaining[0]) and not re.match(r'^\d+(?:[.,]\d+)?$', remaining[0]):
-                        sym = remaining[0]
-                        remaining = remaining[1:]
-                    
-                    # Need at least 3 more elements for dimension, upper, lower
-                    if len(remaining) >= 3:
-                        dimension = remaining[0] if remaining[0] else ""
-                        upper = remaining[1] if len(remaining) > 1 else ""
-                        lower = remaining[2] if len(remaining) > 2 else ""
                         
-                        # Position and measured_by_vendor (optional)
-                        pos = remaining[3] if len(remaining) > 3 else ""
-                        measured_by_vendor = remaining[4] if len(remaining) > 4 else ""
-
-                        measurements.append({
-                            "no": no,
-                            "sym": sym,
-                            "dimension": dimension,
-                            "upper": upper,
-                            "lower": lower,
-                            "pos": pos,
-                            "measured_by_vendor": measured_by_vendor
-                        })
-            except (IndexError, ValueError) as e:
-                continue
-
-    # Alternative approach for formats that don't match the above patterns
-    if not measurements:
-        measurements = extract_alternative_format(page)
+                    # Pad with empty strings if needed
+                    padded_words = (entry_words + [''] * 7)[:7]
+                    
+                    measurement = parse_measurement_entry_safe(padded_words)
+                    if measurement['no']:  # Only add if we have a valid number
+                        measurements.append(measurement)
+                        
+                except (IndexError, ValueError) as e:
+                    # Log the error for debugging but continue processing
+                    print(f"Warning: Could not parse measurement entry: {entry_words}, Error: {e}")
+                    continue
                 
-    return measurements
-
-def extract_alternative_format(page):
-    """Alternative extraction method for different PDF formats"""
-    measurements = []
-    text = page.get_text()
-    
-    # Look for measurement patterns in the text
-    # Pattern for lines like: "1 Ø 10 +0.012 -0.5 Bottom"
-    pattern = re.compile(r'(\d+)\s+([ØøOo]?[^0-9\s]*?)\s*([\d.,+-]+)\s*([\d.,+-]+)\s*([\d.,+-]+)\s*(\w*)', re.MULTILINE)
-    
-    matches = pattern.findall(text)
-    for match in matches:
-        no, sym, dim, upper, lower, pos = match
-        if no and dim:  # Ensure we have at least number and dimension
-            measurements.append({
-                "no": no.strip(),
-                "sym": sym.strip(),
-                "dimension": dim.strip(),
-                "upper": upper.strip(),
-                "lower": lower.strip(),
-                "pos": pos.strip(),
-                "measured_by_vendor": ""
-            })
-    
-    # If still no measurements found, try a simpler approach
-    if not measurements:
-        lines = text.split('\n')
-        for line in lines:
-            # Look for lines starting with numbers
-            if re.match(r'^\s*\d+\s+', line):
-                parts = line.strip().split()
-                if len(parts) >= 4:
-                    try:
-                        measurements.append({
-                            "no": parts[0],
-                            "sym": parts[1] if not re.match(r'^[\d.,+-]+$', parts[1]) else "",
-                            "dimension": parts[2] if not re.match(r'^[\d.,+-]+$', parts[1]) else parts[1],
-                            "upper": parts[3] if not re.match(r'^[\d.,+-]+$', parts[1]) else parts[2],
-                            "lower": parts[4] if len(parts) > 4 and not re.match(r'^[\d.,+-]+$', parts[1]) else parts[3],
-                            "pos": parts[5] if len(parts) > 5 else "",
-                            "measured_by_vendor": ""
-                        })
-                    except IndexError:
-                        continue
-    
     return measurements
 
 def extract_cavity_number_from_filename(filename):
@@ -222,25 +258,34 @@ def process_pdf_data(pdf_data, filename):
     first_page_text = doc[0].get_text("text")
     header_data = extract_header_data(first_page_text)
     
-    # Extract measurements from all pages (including first page for some formats)
+    # Extract measurements from other pages
     all_measurements = []
-    for page_num in range(len(doc)):
+    debug_info = []
+    
+    for page_num in range(1, len(doc)):
         page = doc[page_num]
         measurements_on_page = extract_measurement_data_with_coords(page)
         if measurements_on_page:
             all_measurements.extend(measurements_on_page)
+        
+        # Add debug info for first few pages if needed
+        if page_num <= 2:  # Debug first 2 measurement pages
+            debug_info.append({
+                'page': page_num,
+                'structure': debug_table_structure(page, max_lines=3)
+            })
 
     # Remove duplicates and sort
     unique_measurements = []
     seen = set()
     for measurement in all_measurements:
-        # Create a tuple of key values to check for duplicates
-        key = (measurement['no'], measurement['sym'], measurement['dimension'])
-        if key not in seen:
-            seen.add(key)
+        # Create a signature for duplicate detection
+        signature = (measurement['no'], measurement['sym'], measurement['dimension'])
+        if signature not in seen:
+            seen.add(signature)
             unique_measurements.append(measurement)
     
-    # Sort by number
+    # Sort by measurement number
     unique_measurements.sort(key=lambda x: int(x['no']) if x['no'].isdigit() else 0)
     
     doc.close()
@@ -248,7 +293,8 @@ def process_pdf_data(pdf_data, filename):
     return {
         "cavity_id": cavity_id,
         "header_info": header_data,
-        "measurements": unique_measurements
+        "measurements": unique_measurements,
+        "debug_info": debug_info  # Include debug info for troubleshooting
     }
 
 @app.route('/api/health', methods=['GET'])
@@ -260,9 +306,18 @@ def health_check():
         "service": "PDF Processing API - Vercel"
     })
 
+@app.route('/api/debug-table/<cavity_id>', methods=['GET'])
+def debug_table_endpoint(cavity_id):
+    """Debug endpoint to analyze table structure"""
+    # This would be used for debugging table structure issues
+    return jsonify({
+        "message": "Debug endpoint - implement with specific PDF data",
+        "cavity_id": cavity_id
+    })
+
 @app.route('/api/process-pdf', methods=['POST'])
 def process_pdf():
-    """Process PDF files - optimized for Vercel"""
+    """Process PDF files - optimized for Vercel with improved column detection"""
     try:
         # Check for files
         if 'files' not in request.files:
@@ -281,6 +336,7 @@ def process_pdf():
         all_data = {}
         successful_extractions = 0
         errors = []
+        debug_mode = request.form.get('debug', 'false').lower() == 'true'
         
         for file in files:
             if file and file.filename != '':
@@ -303,12 +359,18 @@ def process_pdf():
                     result = process_pdf_data(pdf_data, filename)
                     
                     cavity_id = result["cavity_id"]
-                    all_data[cavity_id] = {
+                    data_entry = {
                         "filename": filename,
                         "header_info": result["header_info"],
                         "measurements": result["measurements"],
                         "processed_at": datetime.now().isoformat()
                     }
+                    
+                    # Include debug info if requested
+                    if debug_mode:
+                        data_entry["debug_info"] = result["debug_info"]
+                    
+                    all_data[cavity_id] = data_entry
                     successful_extractions += 1
                     
                 except Exception as e:
@@ -324,6 +386,16 @@ def process_pdf():
         # Calculate summary
         total_measurements = sum(len(data['measurements']) for data in all_data.values())
         
+        # Check for potential data quality issues
+        quality_warnings = []
+        for cavity_id, data in all_data.items():
+            measurements = data['measurements']
+            empty_fields_count = sum(1 for m in measurements 
+                                   for field in ['dimension', 'upper', 'lower', 'pos'] 
+                                   if not m.get(field, '').strip())
+            if empty_fields_count > len(measurements) * 0.1:  # More than 10% empty fields
+                quality_warnings.append(f"{cavity_id}: High number of empty measurement fields detected")
+        
         response_data = {
             "success": True,
             "summary": {
@@ -338,6 +410,9 @@ def process_pdf():
         
         if errors:
             response_data["warnings"] = errors
+            
+        if quality_warnings:
+            response_data["quality_warnings"] = quality_warnings
         
         return jsonify(response_data)
         
@@ -348,7 +423,6 @@ def process_pdf():
         }), 500
 
 # CORRECTED: Proper Vercel export
-# Remove the incorrect handler function and use this instead:
 app = app  # Export the Flask app directly
 
 if __name__ == '__main__':
