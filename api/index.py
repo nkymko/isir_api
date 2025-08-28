@@ -98,31 +98,31 @@ def get_text_at_coordinate(page, target_x, target_y, tolerance_x=15, tolerance_y
     
     return ""
 
-def extract_measurement_data_by_coordinates(page, start_y=182.85, row_height=12, num_rows=43):
+def extract_measurement_data_by_coordinates(page, start_y=180, row_height=12, num_rows=43):
     """
     Extract measurement data using fixed coordinates for your specific PDF layout
     """
     measurements = []
     
-    # Define column coordinates for left and right layouts
+    # Define column coordinates for left and right layouts - UPDATED COORDINATES
     left_columns = {
-        'no': 55.71,
-        'sym': 75.71, 
-        'dimension': 105.28,
-        'upper': 136.19,
-        'lower': 162.38,
-        'pos': 185.71,
-        'measured_by_vendor': 220
+        'no': 86,
+        'sym': 104, 
+        'dimension': 127.27,
+        'upper': 150.30,
+        'lower': 174.78,
+        'pos': 197.87,
+        'measured_by_vendor': 226.36
     }
     
     right_columns = {
-        'no': 323.33,
-        'sym': 344.28,
-        'dimension': 373.80, 
-        'upper': 407.14,
-        'lower': 430.95,
-        'pos': 456.19,
-        'measured_by_vendor': 487.61
+        'no': 322.72,
+        'sym': 341.31,
+        'dimension': 363.33, 
+        'upper': 387.57,
+        'lower': 411.51,
+        'pos': 434.54,
+        'measured_by_vendor': 463.03
     }
     
     tolerance_x = 15  # Horizontal tolerance for finding text
@@ -173,30 +173,31 @@ def extract_measurement_data_by_coordinates(page, start_y=182.85, row_height=12,
     
     return measurements
 
-def debug_coordinate_extraction(page, start_y=182.85, num_debug_rows=5):
+def debug_coordinate_extraction(page, start_y=180, num_debug_rows=5):
     """
     Debug function to show what text is found at each coordinate
     """
     debug_info = []
     
+    # UPDATED COORDINATES
     left_columns = {
-        'no': 55.71,
-        'sym': 75.71,
-        'dimension': 105.28, 
-        'upper': 136.19,
-        'lower': 162.38,
-        'pos': 185.71,
-        'measured_by_vendor': 220
+        'no': 86,
+        'sym': 104,
+        'dimension': 127.27, 
+        'upper': 150.30,
+        'lower': 174.78,
+        'pos': 197.87,
+        'measured_by_vendor': 226.36
     }
     
     right_columns = {
-        'no': 323.33,
-        'sym': 344.28,
-        'dimension': 373.80,
-        'upper': 407.14,
-        'lower': 430.95,
-        'pos': 456.19,
-        'measured_by_vendor': 487.61
+        'no': 322.72,
+        'sym': 341.31,
+        'dimension': 363.33,
+        'upper': 387.57,
+        'lower': 411.51,
+        'pos': 434.54,
+        'measured_by_vendor': 463.03
     }
     
     for row in range(num_debug_rows):
