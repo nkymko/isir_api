@@ -19,8 +19,7 @@ CORS(app)
 def home():
     return 'Hello, World!'
 
-# Vercel serverless configuration
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # Reduced to 10MB for Vercel
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 
 ALLOWED_EXTENSIONS = {'pdf'}
 
@@ -28,7 +27,6 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def extract_header_data(page_text):
-    """Extract header information from the text of the first page"""
     header_info = {}
     patterns = {
         'supplier_name': r"Supplier name\s*(.*?)\s*Part No",
@@ -70,18 +68,14 @@ def extract_header_data(page_text):
     return header_info
 
 def get_text_at_coordinate(page, target_x, target_y, tolerance_x=15, tolerance_y=5):
-    """
-    Extract text near specific coordinates with given tolerance
-    """
     words = page.get_text("words")
     found_texts = []
     
     for word in words:
         x0, y0, x1, y1, text, block_no, line_no, word_no = word
-        word_x = x0  # Left edge of word
-        word_y = y0  # Top edge of word
+        word_x = x0 
+        word_y = y0
         
-        # Check if word is within tolerance of target coordinates
         if (abs(word_x - target_x) <= tolerance_x and 
             abs(word_y - target_y) <= tolerance_y):
             found_texts.append({
@@ -91,7 +85,6 @@ def get_text_at_coordinate(page, target_x, target_y, tolerance_x=15, tolerance_y
                 'distance': ((word_x - target_x)**2 + (word_y - target_y)**2)**0.5
             })
     
-    # Return the closest text if any found
     if found_texts:
         found_texts.sort(key=lambda x: x['distance'])
         return found_texts[0]['text']
@@ -99,12 +92,8 @@ def get_text_at_coordinate(page, target_x, target_y, tolerance_x=15, tolerance_y
     return ""
 
 def extract_measurement_data_by_coordinates(page, start_y=180, row_height=12, num_rows=43):
-    """
-    Extract measurement data using fixed coordinates for your specific PDF layout
-    """
     measurements = []
     
-    # Define column coordinates for left and right layouts - UPDATED COORDINATES
     left_columns = {
         'no': 86,
         'sym': 104, 
@@ -125,25 +114,25 @@ def extract_measurement_data_by_coordinates(page, start_y=180, row_height=12, nu
         'measured_by_vendor': 463.03
     }
     
-    tolerance_x = 15  # Horizontal tolerance for finding text
-    tolerance_y = 6   # Vertical tolerance for finding text
+    tolerance_x = 15  # Horizontal tolerance
+    tolerance_y = 6   # Vertical tolerance 
     
     for row in range(num_rows):
         current_y = start_y + (row * row_height)
         
-        # Extract left side data
+        # left side data
         left_data = {}
         for field, x_coord in left_columns.items():
             text = get_text_at_coordinate(page, x_coord, current_y, tolerance_x, tolerance_y)
             left_data[field] = text.strip() if text else ""
         
-        # Extract right side data
+        # right side data
         right_data = {}
         for field, x_coord in right_columns.items():
             text = get_text_at_coordinate(page, x_coord, current_y, tolerance_x, tolerance_y)
             right_data[field] = text.strip() if text else ""
         
-        # Add left side measurement if it has a valid number
+        # left side measurement
         if left_data['no'] and re.match(r'^\d+\.?\d*$', left_data['no']):
             measurements.append({
                 "no": left_data['no'],
@@ -157,7 +146,7 @@ def extract_measurement_data_by_coordinates(page, start_y=180, row_height=12, nu
                 "row": row + 1
             })
         
-        # Add right side measurement if it has a valid number  
+        # right side measurement
         if right_data['no'] and re.match(r'^\d+\.?\d*$', right_data['no']):
             measurements.append({
                 "no": right_data['no'],
@@ -174,9 +163,6 @@ def extract_measurement_data_by_coordinates(page, start_y=180, row_height=12, nu
     return measurements
 
 def debug_coordinate_extraction(page, start_y=180, num_debug_rows=5):
-    """
-    Debug function to show what text is found at each coordinate
-    """
     debug_info = []
     
     # UPDATED COORDINATES
@@ -201,7 +187,7 @@ def debug_coordinate_extraction(page, start_y=180, num_debug_rows=5):
     }
     
     for row in range(num_debug_rows):
-        current_y = start_y + (row * 12)  # Assuming 12pt row height
+        current_y = start_y + (row * 12) 
         
         row_debug = {
             'row': row + 1,
@@ -210,15 +196,13 @@ def debug_coordinate_extraction(page, start_y=180, num_debug_rows=5):
             'right_side': {}
         }
         
-        # Debug left side
         for field, x_coord in left_columns.items():
             text = get_text_at_coordinate(page, x_coord, current_y, 15, 6)
             row_debug['left_side'][field] = {
                 'coordinate': f"({x_coord}, {current_y})",
                 'found_text': text
             }
-        
-        # Debug right side  
+         
         for field, x_coord in right_columns.items():
             text = get_text_at_coordinate(page, x_coord, current_y, 15, 6)
             row_debug['right_side'][field] = {
@@ -231,7 +215,6 @@ def debug_coordinate_extraction(page, start_y=180, num_debug_rows=5):
     return debug_info
 
 def extract_cavity_number_from_filename(filename):
-    """Extract cavity number from filename"""
     match = re.search(r'CAV-(\d+)', filename, re.IGNORECASE)
     if match:
         return f"CAV-{match.group(1)}"
@@ -239,7 +222,6 @@ def extract_cavity_number_from_filename(filename):
         return os.path.splitext(os.path.basename(filename))[0]
 
 def process_pdf_data(pdf_data, filename):
-    """Process PDF data from memory using coordinate-based extraction"""
     try:
         doc = fitz.open(stream=pdf_data, filetype="pdf")
     except Exception as e:
@@ -247,41 +229,33 @@ def process_pdf_data(pdf_data, filename):
 
     cavity_id = extract_cavity_number_from_filename(filename)
     
-    # Extract header info from first page
     first_page_text = doc[0].get_text("text")
     header_data = extract_header_data(first_page_text)
     
-    # Extract measurements from measurement pages using coordinates
     all_measurements = []
     debug_info = []
     
-    # Start from page 1 (second page, index 1) for measurements
     for page_num in range(1, len(doc)):
         page = doc[page_num]
         
-        # Extract measurements using coordinate-based method
         measurements_on_page = extract_measurement_data_by_coordinates(page)
         if measurements_on_page:
             all_measurements.extend(measurements_on_page)
         
-        # Add debug info for first measurement page
         if page_num == 1:
             debug_info.append({
                 'page': page_num,
                 'coordinate_debug': debug_coordinate_extraction(page)
             })
 
-    # Remove duplicates and sort
     unique_measurements = []
     seen = set()
     for measurement in all_measurements:
-        # Create a signature for duplicate detection
         signature = (measurement['no'], measurement['sym'], measurement['dimension'])
         if signature not in seen:
             seen.add(signature)
             unique_measurements.append(measurement)
     
-    # Sort by measurement number
     unique_measurements.sort(key=lambda x: int(x['no']) if x['no'].isdigit() else 0)
     
     doc.close()
@@ -295,7 +269,6 @@ def process_pdf_data(pdf_data, filename):
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -304,7 +277,6 @@ def health_check():
 
 @app.route('/api/debug-coordinates/<cavity_id>', methods=['POST'])
 def debug_coordinates_endpoint(cavity_id):
-    """Debug endpoint to analyze coordinate extraction"""
     try:
         if 'file' not in request.files:
             return jsonify({"error": "No file provided"}), 400
@@ -319,8 +291,7 @@ def debug_coordinates_endpoint(cavity_id):
         if len(doc) < 2:
             return jsonify({"error": "PDF must have at least 2 pages"}), 400
         
-        # Debug first measurement page
-        page = doc[1]  # Second page (index 1)
+        page = doc[1] 
         debug_data = debug_coordinate_extraction(page, num_debug_rows=10)
         
         doc.close()
@@ -339,9 +310,7 @@ def debug_coordinates_endpoint(cavity_id):
 
 @app.route('/api/process-pdf', methods=['POST'])
 def process_pdf():
-    """Process PDF files using coordinate-based extraction"""
     try:
-        # Check for files
         if 'files' not in request.files:
             return jsonify({
                 "error": "No files provided",
@@ -369,15 +338,12 @@ def process_pdf():
                     continue
                 
                 try:
-                    # Read file data into memory
                     pdf_data = file.read()
                     
-                    # Check file size (Vercel has memory limits)
-                    if len(pdf_data) > 10 * 1024 * 1024:  # 10MB
+                    if len(pdf_data) > 10 * 1024 * 1024: 
                         errors.append(f"{filename}: File too large (>10MB)")
                         continue
                     
-                    # Process the PDF using coordinate-based method
                     result = process_pdf_data(pdf_data, filename)
                     
                     cavity_id = result["cavity_id"]
@@ -389,7 +355,6 @@ def process_pdf():
                         "processed_at": datetime.now().isoformat()
                     }
                     
-                    # Include debug info if requested
                     if debug_mode:
                         data_entry["debug_info"] = result["debug_info"]
                     
@@ -406,10 +371,8 @@ def process_pdf():
                 "errors": errors
             }), 400
         
-        # Calculate summary
         total_measurements = sum(len(data['measurements']) for data in all_data.values())
         
-        # Check for potential data quality issues
         quality_warnings = []
         for cavity_id, data in all_data.items():
             measurements = data['measurements']
@@ -446,8 +409,7 @@ def process_pdf():
             "message": str(e)
         }), 500
 
-# CORRECTED: Proper Vercel export
-app = app  # Export the Flask app directly
+app = app 
 
 if __name__ == '__main__':
     app.run(debug=True)
